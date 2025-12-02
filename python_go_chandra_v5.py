@@ -30,8 +30,9 @@ import numpy as np
 import pandas as pd
 import scipy
 from scipy import interpolate
-from astropy.io import ascii
-from astropy.io import fits as pyfits
+# from astropy.io import ascii
+# from astropy.io import fits as pyfits
+import astropy
 from astropy import units as u
 import matplotlib
 from matplotlib import pyplot as plt
@@ -49,69 +50,51 @@ def go_chandra():
     
     # Pull out AU -> m conversion factor
     au_to_m = u.au.to(u.m)
-    # AU_2_m = 1.49598E+11
-    # AU_2_km = 1.49598E+8
     
     # Read config file for inputs
     config = configparser.ConfigParser()
     config.read('config.ini')
     
     obsID = str(config['inputs']['obsID'])
-
-    # Accounting for different filepaths of ObsIDs that originlly had SAMP values and others that did not.
-    # df = pd.read_csv('ObsIDs_with_samp.txt', header=None, delimiter='\t')
-    # samp_ids = np.array(df.iloc[:,0])
-    
-    # Reading in Chandra Event file, extracting all the relevant info and defining assumptions used in analysis <br>
-    
-    # User is prompted to enter the file path of the corrected event file. The script finds the file from the selected folder and reads in all the relevent headers. The asusmptions used for the mapping are also defined here.
-    
-    #Read in fits file
-    # if int(obsID) in samp_ids:
-    #     folder_path = '/Users/mcentees/Desktop/Chandra/' + str(obsID) + '/primary'
-    # else:
-    #     folder_path = '/Users/mcentees/Desktop/Chandra/' + str(obsID) + '/repro'
-    
     folder_path = str(config['inputs']['folder_path'])
-    cor_evt_location = []
-
-    # Script then searches through the folder looking the filename corresponding to the corrected file
-    for file in os.listdir(str(folder_path)):
+    
+    # Search given dir for sso_freeze-corrected event file
+    corrected_event_filepath = []
+    for file in os.listdir(folder_path):
         if file.startswith("hrcf") and file.endswith("pytest_evt2.fits"):
-            cor_evt_location.append(os.path.join(str(folder_path), file))
+            corrected_event_filepath.append(os.path.join(str(folder_path), file))
+    assert len(corrected_event_filepath) == 1, "A single, corrected event file could not be found"
+    corrected_event_filepath = corrected_event_filepath[0]
     
     # File is then read in with relevant header information extracted:
-    hdulist = pyfits.open(cor_evt_location[0], dtype=float)
-    matplotlib.rcParams['agg.path.chunksize'] = 10000
-    img_events=hdulist['EVENTS'].data # the data of the event file
-    img_head = hdulist[1].header # the header information of the event file
-    bigtime = img_events['time'] # time
-    bigxarr = img_events['X'] # x position of photons
-    bigyarr = img_events['Y'] # y position of photons
-    bigchannel = img_events['pha'] # pha channel the photons were found in
-    obs_id = img_head['OBS_ID'] # observation id of the event
-    date_start = img_head['DATE-OBS'] # Start date of observation
-    date_end = img_head['DATE-END'] # End date of observation
-    tstart = img_head['TSTART'] # the start and...
-    tend = img_head['TSTOP'] #... end time of the observation
-    sumamps = img_events['sumamps'] # reading in sumamps figure
-    samp = img_events['samp'] # reading in samp figure
-    pi_cal = img_events['pi']
+    hdulist = astropy.io.fits.open(corrected_event_filepath, dtype=float)
+    # matplotlib.rcParams['agg.path.chunksize'] = 10000 # !!!! No idea why this was here
     
-    cxo_tstart = str(Time(date_start, format='isot').decimalyear).replace('.','D')
-    cxo_tend = str(Time(date_end, format='isot').decimalyear).replace('.','D')
+    img_events  = hdulist['EVENTS'].data # event file data
+    
+    bigtime     = hdulist['EVENTS'].data['time'] # time
+    bigxarr     = hdulist['EVENTS'].data['X'] # x position of photons
+    bigyarr     = hdulist['EVENTS'].data['Y'] # y position of photons
+    bigchannel  = hdulist['EVENTS'].data['pha'] # pha channel the photons were found in
+    sumamps     = hdulist['EVENTS'].data['sumamps'] # reading in sumamps figure
+    samp        = hdulist['EVENTS'].data['samp'] # reading in samp figure
+    pi_cal      = hdulist['EVENTS'].data['pi']
     
     # reading in amplifier signals 
-    av1 = img_events['av1']
-    av2 = img_events['av2']
-    av3 = img_events['av3']
+    av1 = hdulist['EVENTS'].data['av1']
+    av2 = hdulist['EVENTS'].data['av2']
+    av3 = hdulist['EVENTS'].data['av3']
     
-    au1 = img_events['au1']
-    au2 = img_events['au2']
-    au3 = img_events['au3']
+    au1 = hdulist['EVENTS'].data['au1']
+    au2 = hdulist['EVENTS'].data['au2']
+    au3 = hdulist['EVENTS'].data['au3']
+    amp_sf = hdulist['EVENTS'].data['amp_sf'] # reading in amplifier scaling factor
     
-    amp_sf = img_events['amp_sf'] # reading in amplifier scaling factor
-    
+    img_head    = hdulist[1].header # header
+    obs_id      = img_head['OBS_ID'] # observation id of the event
+    tstart      = img_head['TSTART'] # the start and...
+    tend        = img_head['TSTOP'] #... end time of the observation
+
     # The date of the observation is read in...
     datestart = img_head['DATE-OBS']
     evt_date = pd.to_datetime(datestart) #... and coverted to datetiem format to allow the relevant information to be read to...
@@ -122,13 +105,17 @@ def go_chandra():
     evt_DOYFRAC = gca_tools.doy_frac(float(evt_doy), float(evt_hour), float(evt_mins), float(evt_secs)) #... calculated a fractional Day of 
     # Year (DOY) of the observation
     
+    # !!! I want to keep these for now, in case I can use them in centering later on...
     ra_centre, ra_centre_rad = img_head['RA_NOM'], np.deg2rad(img_head['RA_NOM']) # the RA of Jupiter at the centre of the chip is read in as...
     dec_centre, dec_centre_rad = img_head['DEC_NOM'], np.deg2rad(img_head['DEC_NOM']) #... well as Jupitr's DEC
-    j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
+    
     
     hdulist.close()
     
+    breakpoint()
+    
     # Assumptions used for mapping:
+    j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
     scale = 0.13175 # scale used when observing Jupiter using Chandra - in units of arcsec/pixel
     fwhm = 0.8 # FWHM of the HRC-I point spread function (PSF) - in units of arcsec
     psfsize = 25 # size of PSF used - in units of arcsec
@@ -201,7 +188,7 @@ def go_chandra():
     # find the x and y position of the photons
     x_ph = bigxarr_region[indx]
     y_ph = bigyarr_region[indx]
-    
+    breakpoint()
     # plots the selected region (sanity check: Jupiter should be in the centre)
     fig, axes=plt.subplots(figsize=(7,7))
     axes = plt.gca()
