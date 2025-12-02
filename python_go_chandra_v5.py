@@ -48,6 +48,13 @@ from astroquery.jplhorizons import Horizons     #automatically download ephemeri
 
 def go_chandra():
     
+    # Assumptions 
+    j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
+    scale = 0.13175 # scale used when observing Jupiter using Chandra - in units of arcsec/pixel
+    fwhm = 0.8 # FWHM of the HRC-I point spread function (PSF) - in units of arcsec
+    psfsize = 25 # size of PSF used - in units of arcsec
+    alt = 400 # altitude where X-ray emission is assumed to occur in Jupiter's ionosphere - in units of km
+    
     # Pull out AU -> m conversion factor
     au_to_m = u.au.to(u.m)
     
@@ -109,32 +116,25 @@ def go_chandra():
     ra_centre, ra_centre_rad = img_head['RA_NOM'], np.deg2rad(img_head['RA_NOM']) # the RA of Jupiter at the centre of the chip is read in as...
     dec_centre, dec_centre_rad = img_head['DEC_NOM'], np.deg2rad(img_head['DEC_NOM']) #... well as Jupitr's DEC
     
-    
+    # Close the fits file, freeing memory
     hdulist.close()
     
-    breakpoint()
-    
-    # Assumptions used for mapping:
-    j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
-    scale = 0.13175 # scale used when observing Jupiter using Chandra - in units of arcsec/pixel
-    fwhm = 0.8 # FWHM of the HRC-I point spread function (PSF) - in units of arcsec
-    psfsize = 25 # size of PSF used - in units of arcsec
-    alt = 400 # altitude where X-ray emission is assumed to occur in Jupiter's ionosphere - in units of km
-    
-    # Alogrithm uses the start and end date from the observation to generate an epheremis file (from the JPL Horizons server) to use for analysis. The ephermeris file used takes CXO as the observer
-    
-    """Brad's horizons code to extract the ephemeris file"""
-    
-
-    
-    # The start and end times are taken from the horizons file.
+    # Horizons search code courtesy of Brad Snios
+    # The start and end times are taken from the header
     tstart_eph=Time(tstart, format='cxcsec')
     tstop_eph=Time(tend, format='cxcsec')
     dt = TimeDelta(0.125, format='jd')
     
-    # Below sets the parameters of what observer the ephemeris file is generated form. For example, '500' = centre of the Earth, '500@-151' = CXO
-    obj = Horizons(id=599,location='500@-151',epochs={'start':tstart_eph.iso, 'stop':(tstop_eph+dt).iso, 'step':'1m'}, id_type='majorbody')
+    # Format the Horizons search query and fetch the ephemerides
+    horizons_epochs = {'start': tstart_eph.iso,
+                       'stop': (tstop_eph+dt).iso,
+                       'step': '1m'}
+    obj = Horizons(id=599,                  # Jupiter
+                   location='500@-151',     # Chandra as observer location
+                   epochs=horizons_epochs)  # When
     eph_jup = obj.ephemerides()
+    
+    breakpoint()
     
     # Extracts relevent information needed from ephermeris file
     cml_spline_jup = scipy.interpolate.UnivariateSpline(eph_jup['datetime_jd'], eph_jup['PDObsLon'],k=1)
