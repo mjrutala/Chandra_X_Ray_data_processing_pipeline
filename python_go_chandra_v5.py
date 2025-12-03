@@ -55,6 +55,10 @@ def go_chandra():
     psfsize = 25 # size of PSF used - in units of arcsec
     alt = 400 # altitude where X-ray emission is assumed to occur in Jupiter's ionosphere - in units of km
     
+    rad_eq_0 = 71492.0 # radius of equator in km
+    rad_pole_0 = 66854.0 # radius of poles in km
+    ecc = np.sqrt(1.0-(rad_pole_0/rad_eq_0)**2) # oblateness of Jupiter 
+    
     # Pull out AU -> m conversion factor
     au_to_m = u.au.to(u.m)
     
@@ -178,17 +182,22 @@ def go_chandra():
             keyy = key
     skyx_center = img_head['TCRPX'+keyx[5:]]
     skyy_center = img_head['TCRPX'+keyy[5:]]
-    skyx_scaling = img_head['TCDLT'+keyx[5:]] * 3600 # in "/pixel
-    skyy_scaling = img_head['TCDLT'+keyy[5:]] * 3600 # in "/pixel
+    skyx_scaling = np.abs(img_head['TCDLT'+keyx[5:]] * 3600) # in "/pixel
+    skyy_scaling = np.abs(img_head['TCDLT'+keyy[5:]] * 3600) # in "/pixel
     
     # !!!! NB: skyx_scaling is negative, introducing a flip in the image...
     # !!!! I don't know if this is potentially desirable or not...
     
-    bigxarr_region = (bigxarr - skyx_center) * np.abs(skyx_scaling)
-    bigyarr_region = (bigyarr - skyy_center) * np.abs(skyy_scaling)
+    bigxarr_region = (bigxarr - skyx_center) * skyx_scaling
+    bigyarr_region = (bigyarr - skyy_center) * skyy_scaling
     
     # storing all photon data in text file - need this to calculate area for samp distributions later on
     # np.savetxt(str(folder_path) + r"/%s_all_photons.txt" % obs_id, np.c_[bigxarr_region, bigyarr_region, bigtime, bigchannel, samp, sumamps, pi_cal, amp_sf, av1, av2, av3, au1, au2, au3])
+    
+    # Equations for defining ellipse region
+    tilt_ang_rad = np.deg2rad(tilt_ang)
+    R_eq_as = (ang_diam/2.)/np.cos(tilt_ang_rad) # equatorial radius of Jupiter in arcsecs
+    R_pol_as = R_eq_as * np.sqrt(1 - ecc**2) # polar radius of Jupiter in arcsecs
     
     
     # define the x, y, and pha channel limits 
@@ -209,6 +218,13 @@ def go_chandra():
     # plots the selected region (sanity check: Jupiter should be in the centre)
     fig, ax = plt.subplots(figsize=(8,8))
     
+    # Plot (circular) region for extraction
+    import matplotlib.patches as patches
+    # circle = patches.Circle((0, 0), ang_diam/2, color='xkcd:peach', alpha=0.66)
+    limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
+                           edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
+    ax.add_patch(limb_ellipse)
+    
     ax.scatter(x_ph, y_ph, marker='.', s=1, linestyle='None', color='xkcd:navy blue')
     ax.set(title='Selected Region (ObsID %s)' % obs_id, 
             xlim = xlimits, ylim = ylimits)
@@ -226,71 +242,88 @@ def go_chandra():
     ph_time = ph_data['col3'] #... define the time column
     
     # photon times are turned into an array and converted to datetime format
-    np_times = np.array(ph_time)
-    timeincxo = Time(np_times, format='cxcsec')
-    chandra_evt_time = timeincxo.iso
+    # np_times = np.array(ph_time)
+    # timeincxo = Time(np_times, format='cxcsec')
+    # chandra_evt_time = timeincxo.iso
     # Chandra time then converted to a plotable format
-    chandra_evt_time = Time(chandra_evt_time, format='iso', out_subfmt='date_hm')
-    plot_time = Time.to_datetime(chandra_evt_time)
-    print('')
-    print('All observation will be analysed')
+    # chandra_evt_time = Time(chandra_evt_time, format='iso', out_subfmt='date_hm')
+    # plot_time = Time.to_datetime(chandra_evt_time)
+    # print('')
+    # print('All observation will be analysed')
     
-    # Performing the coord transformation on the photons within the selected region
+    # =========================================================================
+    # Coordinate Transform for the whole Observation
+    # =========================================================================
     
-    # The coordinate transformation is performed on the full observation
+    # 
     
-    cxo_ints = []
-    sup_props_list = []
-    sup_time_props_list = []
-    sup_lat_list = []
-    sup_lon_list = []
-    lonj_max = []
-    latj_max = []
-    sup_psf_max = []
-    ph_tevts = []
-    ph_xevts = []
-    ph_yevts = []
-    ph_chavts = []
-    ph_sampvts = []; ph_sumampvts = []; ph_pivts = []; ph_ampsfvts = []
-    ph_av1vts = []; ph_av2vts = []; ph_av3vts = []
-    ph_au1vts = []; ph_au2vts = []; ph_au3vts = []
-    emiss_evts = []
-    ph_cmlevts = []
-    psfmax =[]
+    # # perform the coordinate transformation for entire observation
+    # tevents = ph_data['col3']
+    # xevents = ph_data['col1']
+    # yevents = ph_data['col2']
+    # chaevents = ph_data['col4']
+    # sampevents = ph_data['col5']; sumampsevents = ph_data['col6']; pievents = ph_data['col7']; ampsfevents = ph_data['col8']
+    # av1events = ph_data['col9']; av2events = ph_data['col10']; av3events = ph_data['col11']
+    # au1events = ph_data['col12']; au2events = ph_data['col13']; au3events = ph_data['col14']
     
+    # All of the above simply writes the subset to disk, reads it back in, then reassigns all the columns to variables...
+    # tevents = bigtime[indx]
+    # xevents = x_ph
+    # yevents = y_ph
+    # chaevents = bigchannel[indx]
+    # sampevents = samp[indx]
+    # sumampevents = sumamps[indx]
+    # pievents = pi_cal[indx]
+    # ampsfevents = amp_sf[indx]
+    # av1events = av1[indx]
+    # av2events = av2[indx]
+    # av3events = av3[indx]
+    # au1events = au1[indx]
+    # au2events = au2[indx]
+    # au3events = au3[indx]
     
-    # perform the coordinate transformation for entire observation
-    tevents = ph_data['col3']
-    xevents = ph_data['col1']
-    yevents = ph_data['col2']
-    chaevents = ph_data['col4']
-    sampevents = ph_data['col5']; sumampsevents = ph_data['col6']; pievents = ph_data['col7']; ampsfevents = ph_data['col8']
-    av1events = ph_data['col9']; av2events = ph_data['col10']; av3events = ph_data['col11']
-    au1events = ph_data['col12']; au2events = ph_data['col13']; au3events = ph_data['col14']
+    events = pd.DataFrame({'t': bigtime[indx].byteswap().newbyteorder(), 
+                           'x': x_ph.byteswap().newbyteorder(), 
+                           'y': y_ph.byteswap().newbyteorder(),
+                           'channel': bigchannel[indx].byteswap().newbyteorder(),
+                           'samp': samp[indx].byteswap().newbyteorder(),
+                           'sumamp': sumamps[indx].byteswap().newbyteorder(),
+                           'pi': pi_cal[indx].byteswap().newbyteorder(),
+                           'amp_sf': amp_sf[indx].byteswap().newbyteorder(),
+                           'av1': av1[indx].byteswap().newbyteorder(), 
+                           'av2': av2[indx].byteswap().newbyteorder(), 
+                           'av3': av3[indx].byteswap().newbyteorder(),
+                           'au1': au1[indx].byteswap().newbyteorder(), 
+                           'au2': au2[indx].byteswap().newbyteorder(), 
+                           'au3': au3[indx].byteswap().newbyteorder()})
     
-    """CODING THE SIII COORD TRANSFORMATION"""
+    # =============================================================================
+    # SIII Coordinate Transformation
+    # =============================================================================
+    
     # define the local time and central meridian latitude (CML) during the observation  
     jup_time = (eph_DOYFRAC_jup - evt_DOYFRAC)*86400.0 + tstart
     jup_cml_0 = float(eph_jup['PDObsLon'][0]) + j_rotrate * (jup_time - jup_time[0])
     interpfunc_cml = interpolate.interp1d(jup_time, jup_cml_0)
-    jup_cml = interpfunc_cml(tevents)
+    
+    jup_cml = interpfunc_cml(events['t'])
     jup_cml = np.deg2rad(jup_cml % 360)
+    
     # find the distance between Jupiter and Chandra throughout the observation, convert to km
-    interpfunc_dist = interpolate.interp1d(jup_time, (eph_jup['delta'].astype(float))*au_to_m*1e3)
-    jup_dist = interpfunc_dist(tevents)
+    interpfunc_dist = interpolate.interp1d(jup_time, (eph_jup['delta'].astype(float))*au_to_m*1e-3)
+    jup_dist = interpfunc_dist(events['t'])
     dist = sum(jup_dist)/len(jup_dist)
     kmtoarc = np.rad2deg(1.0/dist)*3.6E3 # convert from km to arc
     kmtopixels = kmtoarc/skyx_scaling # convert from km to pixels using defined scale
-    rad_eq_0 = 71492.0 # radius of equator in km
-    rad_pole_0 = 66854.0 # radius of poles in km
-    ecc = np.sqrt(1.0-(rad_pole_0/rad_eq_0)**2) # oblateness of Jupiter 
+
     rad_eq = rad_eq_0 * kmtopixels
     rad_pole = rad_pole_0 * kmtopixels # convert both radii form km -> pixels
     alt0 = alt * kmtopixels # altitude at which we think emission occurs - agreed in Southampton Nov 15th 2017
     
     # find sublat of Jupiter during each Chandra time interval
     interpfunc_sublat = interpolate.interp1d(jup_time, (sub_obs_lat_jup.astype(float)))
-    jup_sublat = interpfunc_sublat(tevents)
+    jup_sublat = interpfunc_sublat(events['t'])
+    
     # define the planetocentric S3 coordinates of Jupiter 
     phi1 = np.deg2rad(sum(jup_sublat)/len(jup_sublat))
     nn1 = rad_eq/np.sqrt(1.0 - (ecc*np.sin(phi1))**2)
@@ -298,7 +331,7 @@ def go_chandra():
     phig = phi1 - np.arcsin(nn1 * ecc**2 * np.sin(phi1)*np.cos(phi1)/p/rad_eq)
     h = p * rad_eq *np.cos(phig)/np.cos(phi1) - nn1
     interpfunc_nppa = interpolate.interp1d(jup_time, (eph_jup['NPole_ang'].astype(float)))
-    jup_nppa = interpfunc_nppa(tevents)
+    jup_nppa = interpfunc_nppa(events['t'])
     gamma = np.deg2rad(sum(jup_nppa)/len(jup_nppa))
     omega = 0.0
     Del = 1.0
@@ -337,70 +370,165 @@ def go_chandra():
     # Creating 2D array of the properties and time properties
     props = np.zeros((int(360) // int(Del), int(180) // int(Del) + int(1)))
     timeprops = np.zeros((int(360) // int(Del), int(180) // int(Del) + int(1)))
-    num = len(tevents)
+    n_events = len(events)
     # define a Gaussian PSF for the instrument
     psfn = np.pi*(fwhm / (2.0 * np.sqrt(np.log(2.0))))**2
     # create a grid for the position of the properties
-    latx = np.zeros(num)
-    lonx = np.zeros(num)
+    latx = np.zeros(n_events)
+    lonx = np.zeros(n_events)
     
     # Equations for defining ellipse region
     tilt_ang_rad = np.deg2rad(tilt_ang)
     R_eq_as = (ang_diam/2.)/np.cos(tilt_ang_rad) # equatorial radius of Jupiter in arcsecs
     R_pol_as = R_eq_as * np.sqrt(1 - ecc**2) # polar radius of Jupiter in arcsecs
     
-    for k in range(0,num-1):
+    # Modernizing...
+    # n_events = num
     
-        # convert (x,y) position to pixels
-        xpi = (xevents[k]/scale)
-        ypi = (yevents[k]/scale)
+    # cxo_ints = []
+    sup_props_list = []
+    sup_time_props_list = []
+    # sup_lat_list = []
+    # sup_lon_list = []
+    lonj_max = []
+    latj_max = []
+    # sup_psf_max = []
+    # ph_tevts = []
+    # ph_xevts = []
+    # ph_yevts = []
+    # ph_chavts = []
+    # ph_sampvts = []; ph_sumampvts = []; ph_pivts = []; ph_ampsfvts = []
+    # ph_av1vts = []; ph_av2vts = []; ph_av3vts = []
+    # ph_au1vts = []; ph_au2vts = []; ph_au3vts = []
+    emiss_evts = []
+    ph_cmlevts = []
+    psfmax =[]
     
-        # only select photons that lie within ellipse of Jupiter defined using JPL Horizons data
-        if (xevents[k] * np.cos(tilt_ang_rad) + yevents[k] * np.sin(tilt_ang_rad)) ** 2./(R_eq_as ** 2) + (xevents[k] * np.sin(tilt_ang_rad) - yevents[k] * np.cos(tilt_ang_rad)) ** 2./(R_pol_as ** 2.) < 1.0:
     
-            cmlpi = (np.rad2deg(jup_cml[k]))#.astype(int)
     
-            xtj = xt[condition]
-            ytj = yt[condition]
-            latj = (laton.astype(int)) % 180
-            lonj = ((lngon + cmlpi.astype(int) + 360.0).astype(int)) % 360
-            dd = np.sqrt((xpi-xtj)**2 + (ypi-ytj)**2) * scale
-            psfdd = np.exp(-(dd/ (fwhm / (2.0 * np.sqrt(np.log(2.0)))))**2) / psfn # define PSF of instrument
+    # Check interior to planet's limb:
+    ellipse_cond = (events['x'] * np.cos(tilt_ang_rad) + events['y'] * np.sin(tilt_ang_rad)) ** 2./(R_eq_as ** 2) + (events['x'] * np.sin(tilt_ang_rad) - events['y'] * np.cos(tilt_ang_rad)) ** 2./(R_pol_as ** 2.) < 1.0
     
-            psf_max_cond = np.where(psfdd == max(psfdd))[0] # finds the max PSF over each point in the grid
-            count_mx = np.count_nonzero(psf_max_cond)
-            if count_mx != 1: # ignore points where there are 2 cases of the same max PSF
-                continue
-            else:
+    # Find max PSF 
+    count_cond = pd.Series(index = ellipse_cond.index, data = False)
+    xpi = events['x'] / skyx_scaling
+    ypi = events['y'] / skyx_scaling
+    for k in range(n_events):
+        cmlpi = (np.rad2deg(jup_cml[k]))#.astype(int)
+
+        xtj = xt[condition]
+        ytj = yt[condition]
+        latj = (laton.astype(int)) % 180
+        lonj = ((lngon + cmlpi.astype(int) + 360.0).astype(int)) % 360
+        dd = np.sqrt((xpi.iloc[k]-xtj)**2 + (ypi.iloc[k]-ytj)**2) * skyx_scaling
+        psfdd = np.exp(-(dd/ (fwhm / (2.0 * np.sqrt(np.log(2.0)))))**2) / psfn # define PSF of instrument
+
+        psf_max_cond = np.where(psfdd == max(psfdd))[0] # finds the max PSF over each point in the grid
+        count_mx = np.count_nonzero(psf_max_cond)
+        
+        if (count_mx == 1) & (ellipse_cond.iloc[k] == True):
+            
+            # These four need (?) to be assigned in the loop
+            props[lonj,latj] = props[lonj,latj] + psfdd # assign the 2D PSF to the each point in the grid
+            emiss = np.array(np.rad2deg(np.cos(cosc[condition[psf_max_cond]]))) # find the emission angle from each max PSF
+            
+            emiss_evts.append(emiss)
+            ph_cmlevts.append(cmlpi)
+            
+            psfmax.append(psfdd[psf_max_cond][0])
+            latj_max.append(latj[psf_max_cond][0])
+            lonj_max.append(lonj[psf_max_cond][0])
+
+            count_cond.iloc[k] = True   
     
-                props[lonj,latj] = props[lonj,latj] + psfdd # assign the 2D PSF to the each point in the grid
-                emiss = np.array(np.rad2deg(np.cos(cosc[condition[psf_max_cond]]))) # find the emission angle from each max PSF
-                # record the corresponding photon data at each peak in the grid...
-                emiss_evts.append(emiss)
-                ph_cmlevts.append(cmlpi)
-                ph_tevts.append(tevents[k])
-                ph_xevts.append(xevents[k])
-                ph_yevts.append(yevents[k])
-                ph_chavts.append(chaevents[k])
-                ph_sampvts.append(sampevents[k]); ph_sumampvts.append(sumampsevents[k]); ph_pivts.append(pievents[k]); ph_ampsfvts.append(ampsfevents[k])
-                ph_av1vts.append(av1events[k]); ph_av2vts.append(av2events[k]); ph_av3vts.append(av3events[k])
-                ph_au1vts.append(au1events[k]); ph_au2vts.append(au2events[k]); ph_au3vts.append(au3events[k])
-                psfmax.append(psfdd[psf_max_cond])
-                latj_max.append(latj[psf_max_cond])
-                lonj_max.append(lonj[psf_max_cond])
-                ph_tevts_arr = np.array(ph_tevts, dtype=float)
-                ph_xevts_arr = np.array(ph_xevts, dtype=float)
-                ph_yevts_arr = np.array(ph_yevts, dtype=float)
-                ph_chavts_arr = np.array(ph_chavts, dtype=float)
-                ph_sampvts_arr = np.array(ph_sampvts, dtype=float); ph_sumampvts_arr = np.array(ph_sumampvts, dtype=float); ph_pivts_arr = np.array(ph_pivts, dtype=float); ph_ampsfvts_arr = np.array(ph_ampsfvts, dtype=float)
-                ph_av1vts_arr = np.array(ph_av1vts, dtype=float); ph_av2vts_arr = np.array(ph_av2vts, dtype=float); ph_av3vts_arr = np.array(ph_av3vts, dtype=float)
-                ph_au1vts_arr = np.array(ph_au1vts, dtype=float); ph_au2vts_arr = np.array(ph_au2vts, dtype=float); ph_au3vts_arr = np.array(ph_au3vts, dtype=float)
-                #... and save as text file
-                np.savetxt(str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id, np.c_[ph_tevts_arr, ph_xevts_arr, ph_yevts_arr, ph_chavts_arr, latj_max, lonj_max, ph_cmlevts, emiss_evts, psfmax, ph_sampvts_arr, ph_sumampvts_arr, ph_pivts_arr, ph_ampsfvts_arr, ph_av1vts_arr, ph_av2vts_arr, ph_av3vts_arr, ph_au1vts_arr, ph_au2vts_arr, ph_au3vts_arr], delimiter=',', header="t(s),x(arcsec),y(arcsec),PHA,lat (deg),SIII_lon (deg),CML (deg),emiss (deg),Max PSF,samp,sumamps,pi,amp_sf,av1,av2,av3,au1,au2,au3", fmt='%s')
+    # Take the subset
+    planet_events = events[count_cond].copy()
     
+    # Add lat, lon, emiss, cml, and psf
+    planet_events.loc[:, 'lat'] = latj_max
+    planet_events.loc[:, 'lon'] = lonj_max
+    planet_events.loc[:, 'cml'] = ph_cmlevts
+    planet_events.loc[:, 'emiss'] = emiss_evts
+    planet_events.loc[:, 'psf'] = psfmax
+    
+    filepath = str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id
+    with open(filepath, 'a') as f:
+        f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamps, pi, amp_sf, av1, av2, av3, au1, au2, au3, lat (deg), SIII_lon (deg), CML (deg), emiss (deg), Max PSF')
+        planet_events.to_csv(header = True)
+        
+        
+    # breakpoint()
+    # # In principle, the below does not need to be a loop...s
+    # for k in range(n_events):
+    # # for k in range(0,num-1):
+    
+    #     # convert (x,y) position to pixels
+    #     xpi = events['x'].iloc[k] / skyx_scaling
+    #     ypi = events['y'].iloc[k] / skyx_scaling
+    
+    #     # only select photons that lie within ellipse of Jupiter defined using JPL Horizons data
+    #     if (events['x'].iloc[k] * np.cos(tilt_ang_rad) + events['y'].iloc[k] * np.sin(tilt_ang_rad)) ** 2./(R_eq_as ** 2) + (events['x'].iloc[k] * np.sin(tilt_ang_rad) - events['y'].iloc[k] * np.cos(tilt_ang_rad)) ** 2./(R_pol_as ** 2.) < 1.0:
+    
+    #         cmlpi = (np.rad2deg(jup_cml[k]))#.astype(int)
+    
+    #         xtj = xt[condition]
+    #         ytj = yt[condition]
+    #         latj = (laton.astype(int)) % 180
+    #         lonj = ((lngon + cmlpi.astype(int) + 360.0).astype(int)) % 360
+    #         dd = np.sqrt((xpi-xtj)**2 + (ypi-ytj)**2) * skyx_scaling
+    #         psfdd = np.exp(-(dd/ (fwhm / (2.0 * np.sqrt(np.log(2.0)))))**2) / psfn # define PSF of instrument
+    
+    #         psf_max_cond = np.where(psfdd == max(psfdd))[0] # finds the max PSF over each point in the grid
+    #         count_mx = np.count_nonzero(psf_max_cond)
+    #         if count_mx != 1: # ignore points where there are 2 cases of the same max PSF
+    #             continue
+    #         else:
+    
+    #             props[lonj,latj] = props[lonj,latj] + psfdd # assign the 2D PSF to the each point in the grid
+    #             emiss = np.array(np.rad2deg(np.cos(cosc[condition[psf_max_cond]]))) # find the emission angle from each max PSF
+                
+    #             # record the corresponding photon data at each peak in the grid...
+    #             emiss_evts.append(emiss)
+    #             ph_cmlevts.append(cmlpi)
+    #             ph_tevts.append(events['t'].iloc[k])
+    #             ph_xevts.append(events['x'].iloc[k])
+    #             ph_yevts.append(events['y'].iloc[k])
+    #             ph_chavts.append(events['channel'].iloc[k])
+    #             ph_sampvts.append(events['samp'].iloc[k])
+    #             ph_sumampvts.append(events['sumamp'].iloc[k])
+    #             ph_pivts.append(events['pi'].iloc[k])
+    #             ph_ampsfvts.append(events['amp_sf'].iloc[k])
+    #             ph_av1vts.append(events['av1'].iloc[k]); ph_av2vts.append(events['av2'].iloc[k]); ph_av3vts.append(events['av3'].iloc[k])
+    #             ph_au1vts.append(events['au1'].iloc[k]); ph_au2vts.append(events['au2'].iloc[k]); ph_au3vts.append(events['au3'].iloc[k])
+    #             psfmax.append(psfdd[psf_max_cond][0])
+    #             latj_max.append(latj[psf_max_cond][0])
+    #             lonj_max.append(lonj[psf_max_cond][0])
+    #             # ph_tevts_arr = np.array(ph_tevts, dtype=float)
+    #             # ph_xevts_arr = np.array(ph_xevts, dtype=float)
+    #             # ph_yevts_arr = np.array(ph_yevts, dtype=float)
+    #             # ph_chavts_arr = np.array(ph_chavts, dtype=float)
+    #             # ph_sampvts_arr = np.array(ph_sampvts, dtype=float); ph_sumampvts_arr = np.array(ph_sumampvts, dtype=float); ph_pivts_arr = np.array(ph_pivts, dtype=float); ph_ampsfvts_arr = np.array(ph_ampsfvts, dtype=float)
+    #             # ph_av1vts_arr = np.array(ph_av1vts, dtype=float); ph_av2vts_arr = np.array(ph_av2vts, dtype=float); ph_av3vts_arr = np.array(ph_av3vts, dtype=float)
+    #             # ph_au1vts_arr = np.array(ph_au1vts, dtype=float); ph_au2vts_arr = np.array(ph_au2vts, dtype=float); ph_au3vts_arr = np.array(ph_au3vts, dtype=float)
+    #             #... and save as text file
+    #             # np.savetxt(str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id, np.c_[ph_tevts_arr, ph_xevts_arr, ph_yevts_arr, ph_chavts_arr, latj_max, lonj_max, ph_cmlevts, emiss_evts, psfmax, ph_sampvts_arr, ph_sumampvts_arr, ph_pivts_arr, ph_ampsfvts_arr, ph_av1vts_arr, ph_av2vts_arr, ph_av3vts_arr, ph_au1vts_arr, ph_au2vts_arr, ph_au3vts_arr], delimiter=',', header="t(s),x(arcsec),y(arcsec),PHA,lat (deg),SIII_lon (deg),CML (deg),emiss (deg),Max PSF,samp,sumamps,pi,amp_sf,av1,av2,av3,au1,au2,au3", fmt='%s')
+                
+    
+    # breakpoint()
+    # np.savetxt(str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id, 
+    #            np.c_[ph_tevts_arr, ph_xevts_arr, ph_yevts_arr, ph_chavts_arr, latj_max, lonj_max, ph_cmlevts, emiss_evts, psfmax, ph_sampvts_arr, ph_sumampvts_arr, ph_pivts_arr, ph_ampsfvts_arr, ph_av1vts_arr, ph_av2vts_arr, ph_av3vts_arr, ph_au1vts_arr, ph_au2vts_arr, ph_au3vts_arr], delimiter=',', header="t(s),x(arcsec),y(arcsec),PHA,lat (deg),SIII_lon (deg),CML (deg),emiss (deg),Max PSF,samp,sumamps,pi,amp_sf,av1,av2,av3,au1,au2,au3", fmt='%s')
+    
+    # Add comment to CSV with units
+    
+    # header="t(s),x(arcsec),y(arcsec),PHA,lat (deg),
+    # SIII_lon (deg),CML (deg),emiss (deg),Max PSF,samp,sumamps,pi,amp_sf,av1,
+    # av2,av3,au1,au2,au3", fmt='%s')
+
+    # breakpoint() # Are we saving line by line? WORSE! resaving each line hahahahaha
+                
     # effectively, do the same idea except for exposure time
-    obs_start_times = tevents.min()
-    obs_end_times = tevents.max()
+    obs_start_times = events['t'].min()
+    obs_end_times = events['t'].max()
     
     interval = obs_end_times - obs_start_times
     
@@ -429,4 +557,7 @@ def go_chandra():
     np.save(str(folder_path) + f'/{obsID}_sup_props_list.npy', np.array(sup_props_list))
     np.save(str(folder_path) + f'/{obsID}_sup_time_props_list.npy', np.array(sup_time_props_list))
     
-    breakpoint()
+    return planet_events
+
+if __name__ == "__main__":
+    _ = go_chandra()
