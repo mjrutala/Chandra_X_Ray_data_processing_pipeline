@@ -50,7 +50,7 @@ def go_chandra():
     
     # Assumptions 
     j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
-    scale = 0.13175 # scale used when observing Jupiter using Chandra - in units of arcsec/pixel
+    # scale = 0.13175 # scale used when observing Jupiter using Chandra - in units of arcsec/pixel
     fwhm = 0.8 # FWHM of the HRC-I point spread function (PSF) - in units of arcsec
     psfsize = 25 # size of PSF used - in units of arcsec
     alt = 400 # altitude where X-ray emission is assumed to occur in Jupiter's ionosphere - in units of km
@@ -134,8 +134,7 @@ def go_chandra():
                    epochs=horizons_epochs)  # When
     eph_jup = obj.ephemerides()
     
-    breakpoint()
-    
+    # !!!!! Untouched
     # Extracts relevent information needed from ephermeris file
     cml_spline_jup = scipy.interpolate.UnivariateSpline(eph_jup['datetime_jd'], eph_jup['PDObsLon'],k=1)
     lt_jup = eph_jup['lighttime']
@@ -162,13 +161,31 @@ def go_chandra():
     
     jup_time = (eph_DOYFRAC_jup - evt_DOYFRAC)*86400.0 + tstart # local tiem of Jupiter
     
+    # !!!!! END Untouched
+    
     # Select Region for analysis
     
-    # Plots the photons (x,y) position on a grid of defined size in arcseconds (defualted at [-50,50] in both x and y). Jupiter is centred on the HRC instrument. The photon information form the defined 
+    # Plots the photons (x,y) position on a grid of defined size in arcseconds 
+    # (defualted at [-50,50] in both x and y). Jupiter is centred on the HRC 
+    # instrument. The photon information form the defined 
     
-    # converting the x and y coordinates from the event file into arcseconds
-    bigxarr_region = (bigxarr - 16384.5)*0.13175
-    bigyarr_region = (bigyarr - 16384.5)*0.13175
+    # The centering values were previsouly hardcoded, but fail for non-standard observations
+    # Instead, search header keywords for the x, y values to get the correct center
+    for key, val in img_head['TTYPE??'].items():
+        if val == 'x':
+            keyx = key
+        if val == 'y':
+            keyy = key
+    skyx_center = img_head['TCRPX'+keyx[5:]]
+    skyy_center = img_head['TCRPX'+keyy[5:]]
+    skyx_scaling = img_head['TCDLT'+keyx[5:]] * 3600 # in "/pixel
+    skyy_scaling = img_head['TCDLT'+keyy[5:]] * 3600 # in "/pixel
+    
+    # !!!! NB: skyx_scaling is negative, introducing a flip in the image...
+    # !!!! I don't know if this is potentially desirable or not...
+    
+    bigxarr_region = (bigxarr - skyx_center) * np.abs(skyx_scaling)
+    bigyarr_region = (bigyarr - skyy_center) * np.abs(skyy_scaling)
     
     # storing all photon data in text file - need this to calculate area for samp distributions later on
     # np.savetxt(str(folder_path) + r"/%s_all_photons.txt" % obs_id, np.c_[bigxarr_region, bigyarr_region, bigtime, bigchannel, samp, sumamps, pi_cal, amp_sf, av1, av2, av3, au1, au2, au3])
@@ -188,16 +205,13 @@ def go_chandra():
     # find the x and y position of the photons
     x_ph = bigxarr_region[indx]
     y_ph = bigyarr_region[indx]
-    breakpoint()
+    
     # plots the selected region (sanity check: Jupiter should be in the centre)
-    fig, axes=plt.subplots(figsize=(7,7))
-    axes = plt.gca()
+    fig, ax = plt.subplots(figsize=(8,8))
     
-    
-    plt.plot(x_ph,y_ph, 'o', markersize=0.5,linestyle='None',color='blue')
-    plt.title('Selected Region (ObsID %s)' % obs_id)
-    plt.xlim(xlimits)
-    plt.ylim(ylimits)
+    ax.scatter(x_ph, y_ph, marker='.', s=1, linestyle='None', color='xkcd:navy blue')
+    ax.set(title='Selected Region (ObsID %s)' % obs_id, 
+            xlim = xlimits, ylim = ylimits)
     print('')
     print('')
     print('Once you are happy with the selected region, close the figure window to continue analysis')
@@ -208,7 +222,7 @@ def go_chandra():
     # saves the selected region as a text file
     np.savetxt(str(folder_path) + r"/%s_selected_region_ellipse.txt" % obs_id, np.c_[x_ph, y_ph, bigtime[indx], bigchannel[indx], samp[indx], sumamps[indx], pi_cal[indx], amp_sf[indx], av1[indx], av2[indx], av3[indx], au1[indx], au2[indx], au3[indx]])
     
-    ph_data = ascii.read(str(folder_path) + r"/%s_selected_region_ellipse.txt" % obs_id) # read in the selected region data and...
+    ph_data = astropy.io.ascii.read(str(folder_path) + r"/%s_selected_region_ellipse.txt" % obs_id) # read in the selected region data and...
     ph_time = ph_data['col3'] #... define the time column
     
     # photon times are turned into an array and converted to datetime format
@@ -266,7 +280,7 @@ def go_chandra():
     jup_dist = interpfunc_dist(tevents)
     dist = sum(jup_dist)/len(jup_dist)
     kmtoarc = np.rad2deg(1.0/dist)*3.6E3 # convert from km to arc
-    kmtopixels = kmtoarc/scale # convert from km to pixels using defined scale
+    kmtopixels = kmtoarc/skyx_scaling # convert from km to pixels using defined scale
     rad_eq_0 = 71492.0 # radius of equator in km
     rad_pole_0 = 66854.0 # radius of poles in km
     ecc = np.sqrt(1.0-(rad_pole_0/rad_eq_0)**2) # oblateness of Jupiter 
@@ -415,4 +429,4 @@ def go_chandra():
     np.save(str(folder_path) + f'/{obsID}_sup_props_list.npy', np.array(sup_props_list))
     np.save(str(folder_path) + f'/{obsID}_sup_time_props_list.npy', np.array(sup_time_props_list))
     
-
+    breakpoint()
