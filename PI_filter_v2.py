@@ -49,10 +49,8 @@ def pi_filter(acis=None, obs_id=None, obs_dir=None, config=None):
     # else:
     #     folder_path = '/Users/mcentees/Desktop/Chandra/' + str(obsID) + '/repro'
     
-    folder_path = config['inputs']['folder_path']
-    
     # Reading in ellipse data
-    ellipse_data = pd.read_csv(folder_path + f'/{obs_id}_photonlist_full_obs_ellipse.txt', comment='#')
+    ellipse_data = pd.read_csv(obs_dir + f'/{obs_id}_photonlist_full_obs_ellipse.csv', comment='#')
     
     # reading in amplifier signals
     av1_jup = np.array(ellipse_data['av1'])
@@ -101,7 +99,7 @@ def pi_filter(acis=None, obs_id=None, obs_dir=None, config=None):
     elif detector == 'HRC-S':
         df_filtered = df_mod.query("10 < pi < 300")
         
-    new_filepath = folder_path + f'/{obs_id}_photonlist_filtered_ellipse.txt'
+    new_filepath = obs_dir + f'/{obs_id}_photonlist_filtered_ellipse.csv'
     with open(new_filepath, 'w') as f:
         f.write('#UNITS:  t(s), x(arcsec), y(arcsec), pi, amp_sf, av1, av2, av3, au1, au2, au3, lat (deg), SIII_lon (deg), CML (deg), emiss (deg), Max PSF, MJD (days) \n')
         df_filtered.to_csv(f, header = True, index = False)
