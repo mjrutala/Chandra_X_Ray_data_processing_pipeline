@@ -439,7 +439,7 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     planet_events = events[count_cond].copy()
     
     # Add lat, lon, emiss, cml, and psf
-    planet_events.loc[:, 'lat'] = latj_max - 90.
+    planet_events.loc[:, 'lat'] = [l - 90. for l in latj_max]
     planet_events.loc[:, 'lon'] = lonj_max
     planet_events.loc[:, 'cml'] = ph_cmlevts
     planet_events.loc[:, 'emiss'] = emiss_evts
@@ -449,7 +449,7 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     mjd_events = start_time.mjd + (planet_events['t'] - tstart)/(24*60*60)
     planet_events.loc[:, 'mjd'] = mjd_events
     
-    filepath = str(obs_dir)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id
+    filepath = str(obs_dir)+ "/%s_photonlist_full_obs_ellipse.csv" % obs_id
     with open(filepath, 'w') as f:
         f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamps, pi, amp_sf, av1, av2, av3, au1, au2, au3, lat (deg), SIII_lon (deg), CML (deg), emiss (deg), Max PSF, MJD (days) \n')
         planet_events.to_csv(f, header = True, index = False)
