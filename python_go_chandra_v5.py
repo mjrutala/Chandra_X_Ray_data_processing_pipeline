@@ -25,6 +25,7 @@ around Jupiter
 """
 # Import packages
 import go_chandra_analysis_tools as gca_tools # import the defined functions to analysis Chandra data nad perfrom coordinate transformations
+import python_sso_freeze_v6 as sso_freeze
 
 import numpy as np
 import pandas as pd
@@ -46,7 +47,7 @@ from astropy.time import Time                   #convert between different time 
 from astropy.time import TimeDelta              #add/subtract time intervals 
 from astroquery.jplhorizons import Horizons     #automatically download ephemeris 
 
-def go_chandra():
+def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     
     # Assumptions 
     j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
@@ -62,18 +63,27 @@ def go_chandra():
     # Pull out AU -> m conversion factor
     au_to_m = u.au.to(u.m)
     
-    # Read config file for inputs
-    config = configparser.ConfigParser()
-    config.read('config.ini')
+    # If acis, obs_id, and obs_dir are specified, they take precedence
+    if (acis is not None) & (obs_id is not None) & (obs_dir is not None):
+        pass
+    else:
+        # Parse config file
+        cfg = configparser.ConfigParser()
+        cfg.read(config)
+        
+        acis = str(cfg['inputs']['ACIS'])
+        obs_id = cfg['inputs']['obsID']
+        obs_dir = str(cfg['inputs']['folder_path'])
     
-    obsID = str(config['inputs']['obsID'])
-    folder_path = str(config['inputs']['folder_path'])
+    # !!!!! Give SSO Freeze a function to generate this file name from config?
     
     # Search given dir for sso_freeze-corrected event file
+    corrected_event_filepath = sso_freeze.find_event_filepath(acis, obs_id, obs_dir, suffix="pytest_evt2.fits")
+    
     corrected_event_filepath = []
-    for file in os.listdir(folder_path):
+    for file in os.listdir(obs_dir):
         if file.startswith("hrcf") and file.endswith("pytest_evt2.fits"):
-            corrected_event_filepath.append(os.path.join(str(folder_path), file))
+            corrected_event_filepath.append(os.path.join(str(obs_dir), file))
     assert len(corrected_event_filepath) == 1, "A single, corrected event file could not be found"
     corrected_event_filepath = corrected_event_filepath[0]
     
@@ -125,18 +135,11 @@ def go_chandra():
     
     # Horizons search code courtesy of Brad Snios
     # The start and end times are taken from the header
-    tstart_eph=Time(tstart, format='cxcsec')
-    tstop_eph=Time(tend, format='cxcsec')
-    dt = TimeDelta(0.125, format='jd')
+    start_time = Time(tstart, format='cxcsec')
+    stop_time = Time(tend, format='cxcsec')
+    delta_time = '1m'
+    eph_jup = gca_tools.fetch_ephemerides_fromCXO(start_time, stop_time, delta_time)
     
-    # Format the Horizons search query and fetch the ephemerides
-    horizons_epochs = {'start': tstart_eph.iso,
-                       'stop': (tstop_eph+dt).iso,
-                       'step': '1m'}
-    obj = Horizons(id=599,                  # Jupiter
-                   location='500@-151',     # Chandra as observer location
-                   epochs=horizons_epochs)  # When
-    eph_jup = obj.ephemerides()
     
     # !!!!! Untouched
     # Extracts relevent information needed from ephermeris file
@@ -152,7 +155,7 @@ def go_chandra():
     tilt_ang = np.mean(eph_jup['NPole_ang'])
     
     # saving angular diameter and tilt angle in text file in order to plot ellipse in post-processing
-    np.savetxt(str(folder_path) + f'/{obsID}_JPL_ellipse_vals.txt', np.c_[ang_diam, tilt_ang], delimiter=',', header='angular diameter (arcsec),tilt angle (deg)', fmt='%s')
+    np.savetxt(str(obs_dir) + f'/{obs_id}_JPL_ellipse_vals.txt', np.c_[ang_diam, tilt_ang], delimiter=',', header='angular diameter (arcsec),tilt angle (deg)', fmt='%s')
     
     eph_dates = pd.to_datetime(eph_jup['datetime_str'])
     eph_dates = pd.DatetimeIndex(eph_dates)
@@ -192,7 +195,7 @@ def go_chandra():
     bigyarr_region = (bigyarr - skyy_center) * skyy_scaling
     
     # storing all photon data in text file - need this to calculate area for samp distributions later on
-    # np.savetxt(str(folder_path) + r"/%s_all_photons.txt" % obs_id, np.c_[bigxarr_region, bigyarr_region, bigtime, bigchannel, samp, sumamps, pi_cal, amp_sf, av1, av2, av3, au1, au2, au3])
+    # np.savetxt(str(obs_dir) + r"/%s_all_photons.txt" % obs_id, np.c_[bigxarr_region, bigyarr_region, bigtime, bigchannel, samp, sumamps, pi_cal, amp_sf, av1, av2, av3, au1, au2, au3])
     
     # Equations for defining ellipse region
     tilt_ang_rad = np.deg2rad(tilt_ang)
@@ -236,9 +239,9 @@ def go_chandra():
     plt.show()
     
     # saves the selected region as a text file
-    np.savetxt(str(folder_path) + r"/%s_selected_region_ellipse.txt" % obs_id, np.c_[x_ph, y_ph, bigtime[indx], bigchannel[indx], samp[indx], sumamps[indx], pi_cal[indx], amp_sf[indx], av1[indx], av2[indx], av3[indx], au1[indx], au2[indx], au3[indx]])
+    np.savetxt(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id, np.c_[x_ph, y_ph, bigtime[indx], bigchannel[indx], samp[indx], sumamps[indx], pi_cal[indx], amp_sf[indx], av1[indx], av2[indx], av3[indx], au1[indx], au2[indx], au3[indx]])
     
-    ph_data = astropy.io.ascii.read(str(folder_path) + r"/%s_selected_region_ellipse.txt" % obs_id) # read in the selected region data and...
+    ph_data = astropy.io.ascii.read(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id) # read in the selected region data and...
     ph_time = ph_data['col3'] #... define the time column
     
     # photon times are turned into an array and converted to datetime format
@@ -451,13 +454,15 @@ def go_chandra():
     planet_events.loc[:, 'emiss'] = emiss_evts
     planet_events.loc[:, 'psf'] = psfmax
     
-    filepath = str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id
+    # Add true time?
+    mjd_events = start_time.mjd + (planet_events['t'] - tstart)/(24*60*60)
+    planet_events.loc[:, 'mjd'] = mjd_events
+    
+    filepath = str(obs_dir)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id
     with open(filepath, 'w') as f:
-        f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamps, pi, amp_sf, av1, av2, av3, au1, au2, au3, lat (deg), SIII_lon (deg), CML (deg), emiss (deg), Max PSF \n')
+        f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamps, pi, amp_sf, av1, av2, av3, au1, au2, au3, lat (deg), SIII_lon (deg), CML (deg), emiss (deg), Max PSF, MJD (days) \n')
         planet_events.to_csv(f, header = True, index = False)
         
-        
-    breakpoint()
     # # In principle, the below does not need to be a loop...s
     # for k in range(n_events):
     # # for k in range(0,num-1):
@@ -511,11 +516,11 @@ def go_chandra():
     #             # ph_av1vts_arr = np.array(ph_av1vts, dtype=float); ph_av2vts_arr = np.array(ph_av2vts, dtype=float); ph_av3vts_arr = np.array(ph_av3vts, dtype=float)
     #             # ph_au1vts_arr = np.array(ph_au1vts, dtype=float); ph_au2vts_arr = np.array(ph_au2vts, dtype=float); ph_au3vts_arr = np.array(ph_au3vts, dtype=float)
     #             #... and save as text file
-    #             # np.savetxt(str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id, np.c_[ph_tevts_arr, ph_xevts_arr, ph_yevts_arr, ph_chavts_arr, latj_max, lonj_max, ph_cmlevts, emiss_evts, psfmax, ph_sampvts_arr, ph_sumampvts_arr, ph_pivts_arr, ph_ampsfvts_arr, ph_av1vts_arr, ph_av2vts_arr, ph_av3vts_arr, ph_au1vts_arr, ph_au2vts_arr, ph_au3vts_arr], delimiter=',', header="t(s),x(arcsec),y(arcsec),PHA,lat (deg),SIII_lon (deg),CML (deg),emiss (deg),Max PSF,samp,sumamps,pi,amp_sf,av1,av2,av3,au1,au2,au3", fmt='%s')
+    #             # np.savetxt(str(obs_dir)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id, np.c_[ph_tevts_arr, ph_xevts_arr, ph_yevts_arr, ph_chavts_arr, latj_max, lonj_max, ph_cmlevts, emiss_evts, psfmax, ph_sampvts_arr, ph_sumampvts_arr, ph_pivts_arr, ph_ampsfvts_arr, ph_av1vts_arr, ph_av2vts_arr, ph_av3vts_arr, ph_au1vts_arr, ph_au2vts_arr, ph_au3vts_arr], delimiter=',', header="t(s),x(arcsec),y(arcsec),PHA,lat (deg),SIII_lon (deg),CML (deg),emiss (deg),Max PSF,samp,sumamps,pi,amp_sf,av1,av2,av3,au1,au2,au3", fmt='%s')
                 
     
     # breakpoint()
-    # np.savetxt(str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id, 
+    # np.savetxt(str(obs_dir)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id, 
     #            np.c_[ph_tevts_arr, ph_xevts_arr, ph_yevts_arr, ph_chavts_arr, latj_max, lonj_max, ph_cmlevts, emiss_evts, psfmax, ph_sampvts_arr, ph_sumampvts_arr, ph_pivts_arr, ph_ampsfvts_arr, ph_av1vts_arr, ph_av2vts_arr, ph_av3vts_arr, ph_au1vts_arr, ph_au2vts_arr, ph_au3vts_arr], delimiter=',', header="t(s),x(arcsec),y(arcsec),PHA,lat (deg),SIII_lon (deg),CML (deg),emiss (deg),Max PSF,samp,sumamps,pi,amp_sf,av1,av2,av3,au1,au2,au3", fmt='%s')
     
     # Add comment to CSV with units
@@ -554,10 +559,17 @@ def go_chandra():
     sup_props_list = props
     sup_time_props_list = timeprops
     
-    np.save(str(folder_path) + f'/{obsID}_sup_props_list.npy', np.array(sup_props_list))
-    np.save(str(folder_path) + f'/{obsID}_sup_time_props_list.npy', np.array(sup_time_props_list))
+    np.save(str(obs_dir) + f'/{obs_id}_sup_props_list.npy', np.array(sup_props_list))
+    np.save(str(obs_dir) + f'/{obs_id}_sup_time_props_list.npy', np.array(sup_time_props_list))
     
     return planet_events
 
 if __name__ == "__main__":
-    _ = go_chandra()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--config', help='Config file name.')
+    
+    args = parser.parse_args()
+    config = 'config.ini' if args.config is None else args.config
+    
+    _ = go_chandra(config=config)
