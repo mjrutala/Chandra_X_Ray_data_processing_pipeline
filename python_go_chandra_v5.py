@@ -78,7 +78,7 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     # !!!!! Give SSO Freeze a function to generate this file name from config?
     
     # Search given dir for sso_freeze-corrected event file
-    corrected_event_filepath = sso_freeze.find_event_filepath(acis, obs_id, obs_dir, suffix="sso_freeze_evt2.fits")
+    corrected_event_filepath = sso_freeze.find_event_filepath(acis, obs_id, obs_dir, suffix="ssofreeze_evt2.fits")
     
     # corrected_event_filepath = []
     # for file in os.listdir(obs_dir):
@@ -433,9 +433,9 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
             
             # These four need (?) to be assigned in the loop
             props[lonj,latj] = props[lonj,latj] + psfdd # assign the 2D PSF to the each point in the grid
-            emiss = np.array(np.rad2deg(np.cos(cosc[condition[psf_max_cond]]))) # find the emission angle from each max PSF
-            
-            emiss_evts.append(emiss)
+            emiss = np.rad2deg(np.cos(cosc[condition[psf_max_cond]])) # find the emission angle from each max PSF
+                     
+            emiss_evts.append(emiss[0])
             ph_cmlevts.append(cmlpi)
             
             psfmax.append(psfdd[psf_max_cond][0])
