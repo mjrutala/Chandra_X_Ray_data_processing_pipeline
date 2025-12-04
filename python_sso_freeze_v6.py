@@ -89,7 +89,7 @@ def find_event_filepath(acis, obs_id, obs_dir, suffix='evt2.fits'):
         for file in os.listdir(str(obs_dir)):
             if file.startswith("hrcf"+obs_id) and file.endswith(suffix):
                 event_filepath.append(os.path.join(str(obs_dir), file))
-                
+    
     event_filepath = event_filepath[0]
     return event_filepath
     
