@@ -108,8 +108,7 @@ def find_orbit_filepath(acis, obs_id, obs_dir):
     return orbit_filepath
 
 def sso_freeze(config=None, acis=None, obs_id=None, obs_dir=None):
-    breakpoint()
-    
+
     # If acis, obs_id, and obs_dir are specified, they take precedence
     if (acis is not None) & (obs_id is not None) & (obs_dir is not None):
         pass
@@ -118,12 +117,9 @@ def sso_freeze(config=None, acis=None, obs_id=None, obs_dir=None):
         cfg = configparser.ConfigParser()
         cfg.read(config)
         
-        # ACIS = str(config['inputs']['ACIS'])
-        # obs_id = config['inputs']['obsID']
-        # folder_path = str(config['inputs']['folder_path'])
-        acis = str(config['inputs']['ACIS'])
-        obs_id = config['inputs']['obsID']
-        obs_dir = str(config['inputs']['folder_path'])
+        acis = str(cfg['inputs']['ACIS'])
+        obs_id = cfg['inputs']['obsID']
+        obs_dir = str(cfg['inputs']['folder_path'])
     
     # =============================================================================
     # Reading in the Chandra events file (uncorrected) and extract relevant header info
