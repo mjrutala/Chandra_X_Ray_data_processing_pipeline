@@ -452,12 +452,12 @@ def go_chandra():
     planet_events.loc[:, 'psf'] = psfmax
     
     filepath = str(folder_path)+ "/%s_photonlist_full_obs_ellipse.txt" % obs_id
-    with open(filepath, 'a') as f:
-        f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamps, pi, amp_sf, av1, av2, av3, au1, au2, au3, lat (deg), SIII_lon (deg), CML (deg), emiss (deg), Max PSF')
-        planet_events.to_csv(header = True)
+    with open(filepath, 'w') as f:
+        f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamps, pi, amp_sf, av1, av2, av3, au1, au2, au3, lat (deg), SIII_lon (deg), CML (deg), emiss (deg), Max PSF \n')
+        planet_events.to_csv(f, header = True, index = False)
         
         
-    # breakpoint()
+    breakpoint()
     # # In principle, the below does not need to be a loop...s
     # for k in range(n_events):
     # # for k in range(0,num-1):
