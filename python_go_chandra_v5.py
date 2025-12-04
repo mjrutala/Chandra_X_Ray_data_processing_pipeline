@@ -78,14 +78,14 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     # !!!!! Give SSO Freeze a function to generate this file name from config?
     
     # Search given dir for sso_freeze-corrected event file
-    corrected_event_filepath = sso_freeze.find_event_filepath(acis, obs_id, obs_dir, suffix="pytest_evt2.fits")
+    corrected_event_filepath = sso_freeze.find_event_filepath(acis, obs_id, obs_dir, suffix="sso_freeze_evt2.fits")
     
-    corrected_event_filepath = []
-    for file in os.listdir(obs_dir):
-        if file.startswith("hrcf") and file.endswith("pytest_evt2.fits"):
-            corrected_event_filepath.append(os.path.join(str(obs_dir), file))
-    assert len(corrected_event_filepath) == 1, "A single, corrected event file could not be found"
-    corrected_event_filepath = corrected_event_filepath[0]
+    # corrected_event_filepath = []
+    # for file in os.listdir(obs_dir):
+    #     if file.startswith("hrcf") and file.endswith("sso_freeze_evt2.fits"):
+    #         corrected_event_filepath.append(os.path.join(str(obs_dir), file))
+    # assert len(corrected_event_filepath) == 1, "A single, corrected event file could not be found"
+    # corrected_event_filepath = corrected_event_filepath[0]
     
     # File is then read in with relevant header information extracted:
     hdulist = astropy.io.fits.open(corrected_event_filepath, dtype=float)
