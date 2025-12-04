@@ -12,9 +12,8 @@ from matplotlib import pyplot as plt
 from matplotlib import colors
 import datetime
 from datetime import datetime, timedelta
-
-
-
+from astropy.time import Time, TimeDelta
+from astroquery.jplhorizons import Horizons
 
 """Setup the font used for plotting"""
 
@@ -116,6 +115,38 @@ def select_region(x1,x2, y1,y2, bigxarr, bigyarr, bigchannel, cha_min, cha_max):
     
     return indx
     
+def fetch_ephemerides_fromCXO(start_time, stop_time, delta_time):
+    """
+    Horizons search code courtesy of Brad Snios
+
+    Parameters
+    ----------
+    start_time : astropy.time.Time
+        Start time of the observation
+    stop_time : astropy.time.Time
+        Stop time of the observation
+    delta_time : string
+        Spacing of returned ephemerides
+
+    Returns
+    -------
+    eph_jup : astropy.table.table.Table
+        The Horizons ephemerides
+
+    """
+    # Pad the end to account for step sizes
+    padding = TimeDelta(0.125, format='jd')
+    
+    # Format the Horizons search query and fetch the ephemerides
+    horizons_epochs = {'start': start_time.iso,
+                       'stop': (stop_time + padding).iso,
+                       'step': delta_time}
+    obj = Horizons(id=599,                  # Jupiter
+                   location='500@-151',     # Chandra as observer location
+                   epochs=horizons_epochs)  # When
+    
+    eph_jup = obj.ephemerides()
+    return eph_jup
     
 def plotprops(props,st,units,sup_lon_list,sup_lat_list,obs_id, custom_map):
           
