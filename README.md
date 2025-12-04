@@ -64,13 +64,9 @@ To run `sso_freeze` from the command line with the default config file ("config.
 ```shell
 python python_sso_freeze_v6.py
 ``` 
-To run `sso_freeze` from the command with a custom config file:
+To run `sso_freeze` from the command with a custom config file, use the `--config` or `-c` flag:
 ```shell
 python python_sso_freeze_v6.py --config custom_config.ini
-``` 
-or 
-```shell
-python python_sso_freeze_v6.py -c custom_config.ini
 ``` 
 `sso_freeze` may also be imported into other code as a function and run as:
 ```python
@@ -92,24 +88,20 @@ To run `go_chandra` from the command line with the default config file ("config.
 ```shell
 python python_go_chandra_v5.py
 ``` 
-To run `go_chandra` from the command with a custom config file:
+To run `go_chandra` from the command with a custom config file, use the `--config` or `-c` flag:
 ```shell
 python python_go_chandra_v5.py --config custom_config.ini
-``` 
-or 
-```shell
-python python_go_chandra_v5.py -c custom_config.ini
-``` 
+```
 `go_chandra` may also be imported into other code as a function and run as:
 ```python
 go_chandra(acis, obs_id, obs_dir)
 ```
 
-**Input:** Jupiter centered event file (hrcf*_pytest_evt2.fits)
+**Input:** Jupiter centered event file (hrcf*_sso_freeze_evt2.fits)
 
 **Output:** Time-tagged list of all jovian photons (*_photonlist_full_obs_ellipse.txt)
 
-<sub>**Authors:** Dale Weigt, adapted from Randy Gladstone's 'go_chandra' IDL script. Other contributors to the current (and/or) previous iteration(s) of the code are: Hunter Waite, Kurt Franke, Peter Ford, Seán McEntee, Caitríona Jackman, Will Dunn, Brad Snios, Ron Elsner, Ralph Kraft, and Graziella Branduardi-Raymont.</sub>
+<sub>**Authors:** Dale Weigt, adapted from Randy Gladstone's 'go_chandra' IDL script. Other contributors to the current (and/or) previous iteration(s) of the code are: Hunter Waite, Kurt Franke, Peter Ford, Seán McEntee, Caitríona Jackman, Will Dunn, Brad Snios, Ron Elsner, Ralph Kraft, Graziella Branduardi-Raymont, Matthew J. Rutala.</sub>
 
 ## PI_FILTER
 The gain on HRC-I has been degrading over time. To combat this, a new gain metric, pulse invariant (PI), was introduced which shifts the distribution of the amplifier signals to what was observed at the beginning of the Chandra mission. This step is important if the user wishes to compare observations over a long time-span. An attempt is made to minimise the particle background striking the detector by only including PI channels where the source (Jupiter) is expected to dominate the background. For this reason, only photons with PI values in the range 10-250 are included after this PI filter is applied (see https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2022JA030971 for more detail).
