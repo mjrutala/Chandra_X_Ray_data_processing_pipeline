@@ -60,23 +60,49 @@ mv primary/orbit*_eph1.fits repro/
 ## SSO_FREEZE
 The raw data obtained from HRC-I first have to be transformed into a frame of reference centered on Jupiter. The SSO_FREEZE algorithm uses appropriate ephemerides data from the JPL Horizons program and Chandra orbit ancillary data from the Chandra X-ray Center to account for Jupiter's motion on the sky and the relative position of the detector. The raw data are reprojected from sky x and y co-ordinates to a reference frame which is fixed to the motion of Jupiter.
 
+To run `sso_freeze` from the command line with the default config file ("config.ini"):
 ```shell
 python python_sso_freeze_v6.py
 ``` 
+To run `sso_freeze` from the command with a custom config file:
+```shell
+python python_sso_freeze_v6.py --config custom_config.ini
+``` 
+or 
+```shell
+python python_sso_freeze_v6.py -c custom_config.ini
+``` 
+`sso_freeze` may also be imported into other code as a function and run as:
+```python
+sso_freeze(acis, obs_id, obs_dir)
+```
 
 **Input:** uncorrected event file (hrcf*_evt2.fits)
 
-**Output:** Jupiter centered event file (hrcf*_pytest_evt2.fits)
+**Output:** Jupiter centered event file (hrcf*_sso_freeze_evt2.fits)
 
 Note: Need to change the observation ID (**obsID**) and the **folder_path** variables in the **config.ini** file.
 
-<sub>**Authors:** Dale Weigt, adapted from Randy Gladstone's 'stop_hrci' IDL script. Other contributors to the current (and/or) previous iteration(s) of the code are: Hunter Waite, Kurt Franke, Peter Ford, Seán McEntee, Caitríona Jackman, Will Dunn, Brad Snios, Ron Elsner, Ralph Kraft, and Graziella Branduardi-Raymont.</sub>
+<sub>**Authors:** Dale Weigt, adapted from Randy Gladstone's 'stop_hrci' IDL script. Other contributors to the current (and/or) previous iteration(s) of the code are: Hunter Waite, Kurt Franke, Peter Ford, Seán McEntee, Caitríona Jackman, Will Dunn, Brad Snios, Ron Elsner, Ralph Kraft, Graziella Branduardi-Raymont, and Matthew J. Rutala.</sub>
 
 ## GO_CHANDRA
 Python script that takes the corrected .fits file from SSO_FREEZE and performs a coordinate transformation on the X-ray emission to wrap the point-spread function (PSF) around Jupiter. JPL Horizons data are used to define an ellipse which constrains the limb of the planet, enabling the selection of photons based on whether they lie on Jupiter's surface. The output of the GO_CHANDRA algorithm is a text file containing a list of all the time-tagged photons that emanate from Jupiter's surface. Information about the location of each photon (lat, SIII lon, CML) is contained within this text file, along with the amplifier signals needed to calculate the pulse invariant (PI) channels.
 
+To run `go_chandra` from the command line with the default config file ("config.ini"):
 ```shell
 python python_go_chandra_v5.py
+``` 
+To run `go_chandra` from the command with a custom config file:
+```shell
+python python_go_chandra_v5.py --config custom_config.ini
+``` 
+or 
+```shell
+python python_go_chandra_v5.py -c custom_config.ini
+``` 
+`go_chandra` may also be imported into other code as a function and run as:
+```python
+go_chandra(acis, obs_id, obs_dir)
 ```
 
 **Input:** Jupiter centered event file (hrcf*_pytest_evt2.fits)
