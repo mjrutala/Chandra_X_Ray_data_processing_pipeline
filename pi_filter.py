@@ -24,7 +24,7 @@ from astropy.time import Time
 import configparser
 import astropy
 
-import python_sso_freeze_v6 as sso_freeze
+import sso_freeze
 
 def pi_filter(acis=None, obs_id=None, obs_dir=None, config=None):
     

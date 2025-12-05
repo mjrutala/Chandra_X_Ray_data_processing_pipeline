@@ -25,7 +25,7 @@ around Jupiter
 """
 # Import packages
 import go_chandra_analysis_tools as gca_tools # import the defined functions to analysis Chandra data nad perfrom coordinate transformations
-import python_sso_freeze_v6 as sso_freeze
+import sso_freeze
 
 import numpy as np
 import pandas as pd
