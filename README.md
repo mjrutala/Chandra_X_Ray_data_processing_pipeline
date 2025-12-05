@@ -75,7 +75,7 @@ sso_freeze(acis, obs_id, obs_dir)
 
 **Input:** uncorrected event file (hrcf*_evt2.fits)
 
-**Output:** Jupiter centered event file (hrcf*_sso_freeze_evt2.fits)
+**Output:** Jupiter centered event file (hrcf*_ssofreeze_evt2.fits)
 
 Note: Need to change the observation ID (**obsID**) and the **folder_path** variables in the **config.ini** file.
 
@@ -97,7 +97,7 @@ python python_go_chandra_v5.py --config custom_config.ini
 go_chandra(acis, obs_id, obs_dir)
 ```
 
-**Input:** Jupiter centered event file (hrcf*_sso_freeze_evt2.fits)
+**Input:** Jupiter centered event file (hrcf*_ssofreeze_evt2.fits)
 
 **Output:** Time-tagged list of all jovian photons (*_photonlist_full_obs_ellipse.txt)
 
@@ -112,7 +112,7 @@ python PI_filter_v2.py
 
 **Input:** Time-tagged list of all jovian photons (*_photonlist_full_obs_ellipse.txt)
 
-**Output:** Time-tagged list of jovian photons in PI range 10-250 (*_photonlist_PI_filter_Jup_full_10_250.txt)
+**Output:** Time-tagged list of jovian photons in PI range 10-250 (*_photonlist_filtered_ellipse.txt)
 
 <sub>**Authors:** Seán McEntee, Vinay Kashyap, Dale Weigt, Caitriona Jackman</sub>
 
