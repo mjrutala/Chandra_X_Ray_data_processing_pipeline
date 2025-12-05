@@ -62,11 +62,11 @@ The raw data obtained from HRC-I first have to be transformed into a frame of re
 
 To run `sso_freeze` from the command line with the default config file ("config.ini"):
 ```shell
-python python_sso_freeze_v6.py
+python sso_freeze.py
 ``` 
 To run `sso_freeze` from the command with a custom config file, use the `--config` or `-c` flag:
 ```shell
-python python_sso_freeze_v6.py --config custom_config.ini
+python sso_freeze.py --config custom_config.ini
 ``` 
 `sso_freeze` may also be imported into other code as a function and run as:
 ```python
@@ -86,11 +86,11 @@ Python script that takes the corrected .fits file from SSO_FREEZE and performs a
 
 To run `go_chandra` from the command line with the default config file ("config.ini"):
 ```shell
-python python_go_chandra_v5.py
+python go_chandra.py
 ``` 
 To run `go_chandra` from the command with a custom config file, use the `--config` or `-c` flag:
 ```shell
-python python_go_chandra_v5.py --config custom_config.ini
+python go_chandra.py --config custom_config.ini
 ```
 `go_chandra` may also be imported into other code as a function and run as:
 ```python
@@ -107,7 +107,7 @@ go_chandra(acis, obs_id, obs_dir)
 The gain on HRC-I has been degrading over time. To combat this, a new gain metric, pulse invariant (PI), was introduced which shifts the distribution of the amplifier signals to what was observed at the beginning of the Chandra mission. This step is important if the user wishes to compare observations over a long time-span. An attempt is made to minimise the particle background striking the detector by only including PI channels where the source (Jupiter) is expected to dominate the background. For this reason, only photons with PI values in the range 10-250 are included after this PI filter is applied (see https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2022JA030971 for more detail).
 
 ```shell
-python PI_filter_v2.py
+python pi_filter.py
 ```
 
 **Input:** Time-tagged list of all jovian photons (*_photonlist_full_obs_ellipse.txt)
