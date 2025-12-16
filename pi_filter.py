@@ -23,6 +23,7 @@ import pandas as pd
 from astropy.time import Time
 import configparser
 import astropy
+import os
 
 import sso_freeze
 
@@ -41,7 +42,11 @@ def pi_filter(acis=None, obs_id=None, obs_dir=None, config=None):
         obs_dir = str(cfg['inputs']['folder_path'])
     
     # Accounting for different filepaths of ObsIDs that originlly had SAMP values and others that did not.
-    df = pd.read_csv('ObsIDs_with_samp.txt', header=None, delimiter='\t')
+    # Get the absolute path of the current script file
+    current_file_path = os.path.abspath(__file__)
+    # Get the directory containing the current script file
+    current_directory = os.path.dirname(current_file_path)
+    df = pd.read_csv(current_directory + '/ObsIDs_with_samp.txt', header=None, delimiter='\t')
     samp_ids = np.array(df.iloc[:,0])
     
     # if int(obsID) in samp_ids:
