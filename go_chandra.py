@@ -47,6 +47,32 @@ from astropy.time import Time                   #convert between different time 
 from astropy.time import TimeDelta              #add/subtract time intervals 
 from astroquery.jplhorizons import Horizons     #automatically download ephemeris 
 
+# CONSTANTS
+# BETTER IF THESE WERE READ FROM SOMEWHERE
+rad_eq_0 = 71492.0 # radius of equator in km
+rad_pole_0 = 66854.0 # radius of poles in km
+ecc = np.sqrt(1.0-(rad_pole_0/rad_eq_0)**2) # oblateness of Jupiter 
+    
+
+def get_JupiterPatch(eph):
+    import matplotlib.patches as patches
+    
+    # Adding angular diameter from JPL Horizons to use later to define radius of circular region within which photons are kept
+    ang_diam = max(eph['ang_width'])
+    
+    # Also adding tilt angle of Jupiter with respect to true North Pole
+    tilt_ang = np.mean(eph['NPole_ang'])
+    
+    # Equations for defining ellipse region
+    tilt_ang_rad = np.deg2rad(tilt_ang)
+    R_eq_as = (ang_diam/2.)/np.cos(tilt_ang_rad) # equatorial radius of Jupiter in arcsecs
+    R_pol_as = R_eq_as * np.sqrt(1 - ecc**2) # polar radius of Jupiter in arcsecs
+    
+    limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
+                           edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
+    
+    return limb_ellipse
+
 def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     
     # Assumptions 
@@ -55,10 +81,6 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     fwhm = 0.8 # FWHM of the HRC-I point spread function (PSF) - in units of arcsec
     psfsize = 25 # size of PSF used - in units of arcsec
     alt = 400 # altitude where X-ray emission is assumed to occur in Jupiter's ionosphere - in units of km
-    
-    rad_eq_0 = 71492.0 # radius of equator in km
-    rad_pole_0 = 66854.0 # radius of poles in km
-    ecc = np.sqrt(1.0-(rad_pole_0/rad_eq_0)**2) # oblateness of Jupiter 
     
     # Pull out AU -> m conversion factor
     au_to_m = u.au.to(u.m)
@@ -213,10 +235,11 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     fig, ax = plt.subplots(figsize=(8,8))
     
     # Plot (circular) region for extraction
-    import matplotlib.patches as patches
+    # import matplotlib.patches as patches
     # circle = patches.Circle((0, 0), ang_diam/2, color='xkcd:peach', alpha=0.66)
-    limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
-                           edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
+    # limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
+    #                        edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
+    limb_ellipse = get_JupiterPatch(eph_jup)
     ax.add_patch(limb_ellipse)
     
     ax.scatter(x_ph, y_ph, marker='.', s=1, linestyle='None', color='xkcd:navy blue')
