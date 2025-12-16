@@ -79,18 +79,20 @@ def find_event_filepath(acis, obs_id, obs_dir, suffix='evt2.fits'):
     Spun off from sso_freeze so other functions can call this directly
     Rather than constantly reinventing the wheel
     """
-    event_filepath = []
+    event_filepaths = []
     
     if acis == 'y':
         for file in os.listdir(str(obs_dir)):
             if file.startswith("acisf") and file.endswith(suffix):
-                event_filepath.append(os.path.join(str(obs_dir), file))
+                event_filepaths.append(os.path.join(str(obs_dir), file))
     else:
         for file in os.listdir(str(obs_dir)):
             if file.startswith("hrcf"+obs_id) and file.endswith(suffix):
-                event_filepath.append(os.path.join(str(obs_dir), file))
+                event_filepaths.append(os.path.join(str(obs_dir), file))
     
-    event_filepath = event_filepath[0]
+    # Take the shortest filepath
+    filepath_lens = [len(i) for i in event_filepaths]
+    event_filepath = event_filepaths[filepath_lens.index(min(filepath_lens))]
     return event_filepath
     
 def find_orbit_filepath(acis, obs_id, obs_dir):
@@ -216,26 +218,28 @@ def sso_freeze(config=None, acis=None, obs_id=None, obs_dir=None):
     
     # breakpoint()
     
-    # Jupiter-Chandra distance, in meters
-    r_jup = np.array(eph_jup['delta'].astype(float))*(u.au.to(u.m))  
-    # DEC of Jupiter during observation, in rad
-    dec_jup = np.deg2rad(np.array(eph_jup['DEC'].astype(float))) 
-    # RA of Jupiter duting observation, in rad
-    ra_jup = np.deg2rad(np.array(eph_jup['RA'].astype(float)))
+    # # Jupiter-Chandra distance, in meters
+    # r_jup = np.array(eph_jup['delta'].astype(float))*(u.au.to(u.m))  
+    # # DEC of Jupiter during observation, in rad
+    # dec_jup = np.deg2rad(np.array(eph_jup['DEC'].astype(float))) 
+    # # RA of Jupiter duting observation, in rad
+    # ra_jup = np.deg2rad(np.array(eph_jup['RA'].astype(float)))
     
-    # (xp, yp, zp) are the components of CXO-Jupiter distance
-    xp = (r_jup * np.cos(dec_jup) * np.cos(ra_jup))
-    yp = (r_jup * np.cos(dec_jup) * np.sin(ra_jup))
-    zp = (r_jup * np.sin(dec_jup))
+    # # (xp, yp, zp) are the components of CXO-Jupiter distance
+    # xp = (r_jup * np.cos(dec_jup) * np.cos(ra_jup))
+    # yp = (r_jup * np.cos(dec_jup) * np.sin(ra_jup))
+    # zp = (r_jup * np.sin(dec_jup))
     
-    rp = np.sqrt(xp**2 + yp**2 + zp**2)
-    rap_jup = (np.rad2deg(np.arctan2(yp,xp)) + 720.0) % 360  # RA of Jupiter at the observed coordinates
-    decp_jup = (np.rad2deg(np.arcsin(zp/rp))) # DEC of Jupiter at the observed coordinates
+    # rp = np.sqrt(xp**2 + yp**2 + zp**2)
+    # rap_jup = (np.rad2deg(np.arctan2(yp,xp)) + 720.0) % 360  # RA of Jupiter at the observed coordinates
+    # decp_jup = (np.rad2deg(np.arcsin(zp/rp))) # DEC of Jupiter at the observed coordinates
     
     cc = np.cos(np.deg2rad(DEC_0)) # offset from Jupiter to allow photons to be tracked(?)
     
-    interpfunc_ra_jup = interpolate.interp1d(eph_doyfrac, rap_jup)
-    interpfunc_dec_jup = interpolate.interp1d(eph_doyfrac, decp_jup)
+    # interpfunc_ra_jup = interpolate.interp1d(eph_doyfrac, rap_jup)
+    # interpfunc_dec_jup = interpolate.interp1d(eph_doyfrac, decp_jup)
+    interpfunc_ra_jup = interpolate.interp1d(eph_doyfrac, eph_jup['RA'].data)
+    interpfunc_dec_jup = interpolate.interp1d(eph_doyfrac, eph_jup['DEC'].data)
     ra_jup_interp = interpfunc_ra_jup(doy_chandra) # interpolated RA of Jupiter and the DOY of the emphermis file to the Chandra DOY
     dec_jup_interp = interpfunc_dec_jup(doy_chandra) # interpolated DEC of Jupiter and the DOY from the emphermis file to the Chandra
     #DOY
@@ -247,10 +251,11 @@ def sso_freeze(config=None, acis=None, obs_id=None, obs_dir=None):
     
     else:
         scale = 0.13175 # untis of pixels/arcsec 
-        xx = (event_x - (RA_0 - ra_jup_interp) * 3600.0 / scale * cc).astype(float) # corrected x position of photons
-        yy = (event_y + (DEC_0 - dec_jup_interp) * 3600.0 / scale).astype(float) # corrected y position of photons
-    
-    
+        # xx = (event_x - (RA_0 - ra_jup_interp) * 3600.0 / scale * cc).astype(float) # corrected x position of photons
+        # yy = (event_y + (DEC_0 - dec_jup_interp) * 3600.0 / scale).astype(float) # corrected y position of photons
+        xx = (event_x - (RA_0 - ra_jup_interp) * 27314.112291350615 * cc).astype(float)
+        yy = (event_y + (DEC_0 - dec_jup_interp) * 27314.112291350615).astype(float)
+        
     # =========================================================================
     # The new positions of the photons replace the uncorrected positions from
     # the fits file and is written to a new fits file
