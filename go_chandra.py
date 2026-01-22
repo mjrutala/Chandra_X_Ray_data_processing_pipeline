@@ -54,7 +54,7 @@ rad_pole_0 = 66854.0 # radius of poles in km
 ecc = np.sqrt(1.0-(rad_pole_0/rad_eq_0)**2) # oblateness of Jupiter 
     
 
-def get_JupiterPatch(eph):
+def get_JupiterPatch(eph, **kwargs):
     import matplotlib.patches as patches
     
     # Adding angular diameter from JPL Horizons to use later to define radius of circular region within which photons are kept
@@ -69,7 +69,7 @@ def get_JupiterPatch(eph):
     R_pol_as = R_eq_as * np.sqrt(1 - ecc**2) # polar radius of Jupiter in arcsecs
     
     limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
-                           edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
+                           **kwargs)
     
     return limb_ellipse
 
@@ -239,7 +239,8 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     # circle = patches.Circle((0, 0), ang_diam/2, color='xkcd:peach', alpha=0.66)
     # limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
     #                        edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
-    limb_ellipse = get_JupiterPatch(eph_jup)
+    limb_ellipse = get_JupiterPatch(eph_jup, 
+                                    edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
     ax.add_patch(limb_ellipse)
     
     ax.scatter(x_ph, y_ph, marker='.', s=1, linestyle='None', color='xkcd:navy blue')
@@ -253,10 +254,10 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     plt.show()
     
     # saves the selected region as a text file
-    np.savetxt(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id, np.c_[x_ph, y_ph, bigtime[indx], bigchannel[indx], samp[indx], sumamps[indx], pi_cal[indx], amp_sf[indx], av1[indx], av2[indx], av3[indx], au1[indx], au2[indx], au3[indx]])
+    # np.savetxt(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id, np.c_[x_ph, y_ph, bigtime[indx], bigchannel[indx], samp[indx], sumamps[indx], pi_cal[indx], amp_sf[indx], av1[indx], av2[indx], av3[indx], au1[indx], au2[indx], au3[indx]])
     
-    ph_data = astropy.io.ascii.read(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id) # read in the selected region data and...
-    ph_time = ph_data['col3'] #... define the time column
+    # ph_data = astropy.io.ascii.read(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id) # read in the selected region data and...
+    # ph_time = ph_data['col3'] #... define the time column
     
     # photon times are turned into an array and converted to datetime format
     # np_times = np.array(ph_time)
@@ -271,48 +272,25 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     # =========================================================================
     # Coordinate Transform for the whole Observation
     # =========================================================================
-    
-    # 
-    
-    # # perform the coordinate transformation for entire observation
-    # tevents = ph_data['col3']
-    # xevents = ph_data['col1']
-    # yevents = ph_data['col2']
-    # chaevents = ph_data['col4']
-    # sampevents = ph_data['col5']; sumampsevents = ph_data['col6']; pievents = ph_data['col7']; ampsfevents = ph_data['col8']
-    # av1events = ph_data['col9']; av2events = ph_data['col10']; av3events = ph_data['col11']
-    # au1events = ph_data['col12']; au2events = ph_data['col13']; au3events = ph_data['col14']
-    
-    # All of the above simply writes the subset to disk, reads it back in, then reassigns all the columns to variables...
-    # tevents = bigtime[indx]
-    # xevents = x_ph
-    # yevents = y_ph
-    # chaevents = bigchannel[indx]
-    # sampevents = samp[indx]
-    # sumampevents = sumamps[indx]
-    # pievents = pi_cal[indx]
-    # ampsfevents = amp_sf[indx]
-    # av1events = av1[indx]
-    # av2events = av2[indx]
-    # av3events = av3[indx]
-    # au1events = au1[indx]
-    # au2events = au2[indx]
-    # au3events = au3[indx]
-    
-    events = pd.DataFrame({'t': bigtime[indx].byteswap().newbyteorder(), 
-                           'x': x_ph.byteswap().newbyteorder(), 
-                           'y': y_ph.byteswap().newbyteorder(),
-                           'channel': bigchannel[indx].byteswap().newbyteorder(),
-                           'samp': samp[indx].byteswap().newbyteorder(),
-                           'sumamp': sumamps[indx].byteswap().newbyteorder(),
-                           'pi': pi_cal[indx].byteswap().newbyteorder(),
-                           'amp_sf': amp_sf[indx].byteswap().newbyteorder(),
-                           'av1': av1[indx].byteswap().newbyteorder(), 
-                           'av2': av2[indx].byteswap().newbyteorder(), 
-                           'av3': av3[indx].byteswap().newbyteorder(),
-                           'au1': au1[indx].byteswap().newbyteorder(), 
-                           'au2': au2[indx].byteswap().newbyteorder(), 
-                           'au3': au3[indx].byteswap().newbyteorder()})
+    # Convert from big-endian to native little-endian
+    events = pd.DataFrame({'t': bigtime[indx].astype(np.float64), 
+                           'x': x_ph.astype(np.float64),
+                           'y': y_ph.astype(np.float64),
+                           'channel': bigchannel[indx].astype(np.float64),
+                           'samp': samp[indx].astype(np.float64),
+                           'sumamp': sumamps[indx].astype(np.float64),
+                           'pi': pi_cal[indx].astype(np.float64),
+                           'amp_sf': amp_sf[indx].astype(np.float64),
+                           'av1': av1[indx].astype(np.float64), 
+                           'av2': av2[indx].astype(np.float64),
+                           'av3': av3[indx].astype(np.float64),
+                           'au1': au1[indx].astype(np.float64), 
+                           'au2': au2[indx].astype(np.float64), 
+                           'au3': au3[indx].astype(np.float64)})
+    filepath = str(obs_dir)+ "/{}_selected_region_ellipse.csv".format(obs_id)
+    with open(filepath, 'w') as f:
+        f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamp, pi, amp_sf, av1, av2, av3, au1, au2, au3\n')
+        events.to_csv(f, header = True, index = False)
     
     # =============================================================================
     # SIII Coordinate Transformation
@@ -422,7 +400,7 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     psfmax =[]
     
     
-    
+    breakpoint()
     # Check interior to planet's limb:
     ellipse_cond = (events['x'] * np.cos(tilt_ang_rad) + events['y'] * np.sin(tilt_ang_rad)) ** 2./(R_eq_as ** 2) + (events['x'] * np.sin(tilt_ang_rad) - events['y'] * np.cos(tilt_ang_rad)) ** 2./(R_pol_as ** 2.) < 1.0
     
