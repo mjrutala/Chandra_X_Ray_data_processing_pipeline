@@ -43,49 +43,44 @@ import os
 from astropy.time import Time
 import configparser
 from matplotlib import patches
+from pathlib import Path
+import glob
+import tqdm
 
 from astropy.time import Time                   #convert between different time coordinates
 from astropy.time import TimeDelta              #add/subtract time intervals 
 from astroquery.jplhorizons import Horizons     #automatically download ephemeris 
 
+plt.style.use('/Users/mrutala/code/python/mjr.mplstyle')
+
+
+# =============================================================================
+#     # Assumptions 
+# =============================================================================
+j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
+# scale = 0.13175 # scale used when observing Jupiter using Chandra - in units of arcsec/pixel
+fwhm = 0.8 # FWHM of the HRC-I point spread function (PSF) - in units of arcsec
+psfsize = 25 # size of PSF used - in units of arcsec
+alt = 400 # altitude where X-ray emission is assumed to occur in Jupiter's ionosphere - in units of km
+# dtor = np.pi/180
+# rtod = 180/np.pi
+
 # CONSTANTS
 # BETTER IF THESE WERE READ FROM SOMEWHERE
-rad_eq_0 = 71492.0 # radius of equator in km
-rad_pole_0 = 66854.0 # radius of poles in km
+rad_eq_0 = R_eq_0 = 71492.0 # radius of equator in km
+rad_pole_0 = R_rot_0 = 66854.0 # radius of poles in km
+flattening = (rad_eq_0 - rad_pole_0)/rad_eq_0
 ecc = np.sqrt(1.0-(rad_pole_0/rad_eq_0)**2) # oblateness of Jupiter 
-    
 
-def get_JupiterPatch(eph, **kwargs):
-    import matplotlib.patches as patches
     
-    # Adding angular diameter from JPL Horizons to use later to define radius of circular region within which photons are kept
-    ang_diam = max(eph['ang_width'])
-    
-    # Also adding tilt angle of Jupiter with respect to true North Pole
-    tilt_ang = np.mean(eph['NPole_ang'])
-    
-    # Equations for defining ellipse region
-    tilt_ang_rad = np.deg2rad(tilt_ang)
-    R_eq_as = (ang_diam/2.)/np.cos(tilt_ang_rad) # equatorial radius of Jupiter in arcsecs
-    R_pol_as = R_eq_as * np.sqrt(1 - ecc**2) # polar radius of Jupiter in arcsecs
-    
-    limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
-                           **kwargs)
-    
-    return limb_ellipse
+    # Frames:
+    # SKY: Full RA & DEC 
+    # TAR(GET): Target-centered RA & DEC
+    # JUP(ITER): Target-centered and rotated arcseconds
 
-def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
-    
-    # =============================================================================
-    #     # Assumptions 
-    # =============================================================================
-    j_rotrate = np.rad2deg(1.758533641E-4) # Jupiter's rotation period
-    # scale = 0.13175 # scale used when observing Jupiter using Chandra - in units of arcsec/pixel
-    fwhm = 0.8 # FWHM of the HRC-I point spread function (PSF) - in units of arcsec
-    psfsize = 25 # size of PSF used - in units of arcsec
-    alt = 400 # altitude where X-ray emission is assumed to occur in Jupiter's ionosphere - in units of km
-    dtor = np.pi/180
-    rtod = 180/np.pi
+def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None,
+               default_psf=False):
+
     
     # Pull out AU -> m conversion factor
     au_to_m = u.au.to(u.m)
@@ -105,30 +100,49 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     # Search given dir for sso_freeze-corrected event file
     corrected_event_filepath = sso_freeze.find_event_filepath(acis, obs_id, obs_dir, suffix="ssofreeze_evt2.fits")
     
-    # File is then read in with relevant header information extracted:
-    with astropy.io.fits.open(corrected_event_filepath, dtype=float) as hdulist:
-    # matplotlib.rcParams['agg.path.chunksize'] = 10000 # !!!! No idea why this was here
+    # Read the sso_freeze-corrected event file into a dataframe
+    corrected_events = cev = pd.DataFrame()
     
-        img_events  = hdulist['EVENTS'].data # event file data
+    with astropy.io.fits.open(corrected_event_filepath, dtype=float) as hdulist:
         
-        bigtime     = hdulist['EVENTS'].data['time'] # time
-        bigxarr     = hdulist['EVENTS'].data['X'] # x position of photons
-        bigyarr     = hdulist['EVENTS'].data['Y'] # y position of photons
-        bigchannel  = hdulist['EVENTS'].data['pha'] # pha channel the photons were found in
-        sumamps     = hdulist['EVENTS'].data['sumamps'] # reading in sumamps figure
-        samp        = hdulist['EVENTS'].data['samp'] # reading in samp figure
-        pi_cal      = hdulist['EVENTS'].data['pi']
+        # Which variables to read, and what to assign them to
+        cev_relex = {'t': 'time', 
+                     'x': 'X', 
+                     'y': 'Y', 
+                     'channel':'pha',
+                     'sumamps': 'sumamps',
+                     'samp': 'samp',
+                     'pi_cal': 'pi',
+                     'av1': 'av1', 'av2': 'av2', 'av3': 'av3',
+                     'au1': 'au1', 'au2': 'au2', 'au3': 'au3',
+                     'amp_sf': 'amp_sf'
+                     }
         
-        # reading in amplifier signals 
-        av1 = hdulist['EVENTS'].data['av1']
-        av2 = hdulist['EVENTS'].data['av2']
-        av3 = hdulist['EVENTS'].data['av3']
+        # The .astype() call is needed to convert from big-endian to native little-endian
+        for output_key, input_key in cev_relex.items():
+            corrected_events.loc[:,output_key] = hdulist['EVENTS'].data[input_key].astype(np.float64)
+            
+       
+        # img_events  = hdulist['EVENTS'].data # event file data
         
-        au1 = hdulist['EVENTS'].data['au1']
-        au2 = hdulist['EVENTS'].data['au2']
-        au3 = hdulist['EVENTS'].data['au3']
-        amp_sf = hdulist['EVENTS'].data['amp_sf'] # reading in amplifier scaling factor
+        # bigtime     = hdulist['EVENTS'].data['time'] # time
+        # bigxarr     = hdulist['EVENTS'].data['X'] # x position of photons
+        # bigyarr     = hdulist['EVENTS'].data['Y'] # y position of photons
+        # bigchannel  = hdulist['EVENTS'].data['pha'] # pha channel the photons were found in
+        # sumamps     = hdulist['EVENTS'].data['sumamps'] # reading in sumamps figure
+        # samp        = hdulist['EVENTS'].data['samp'] # reading in samp figure
+        # pi_cal      = hdulist['EVENTS'].data['pi']
+
+        # # reading in amplifier signals 
+        # av1 = hdulist['EVENTS'].data['av1']
+        # av2 = hdulist['EVENTS'].data['av2']
+        # av3 = hdulist['EVENTS'].data['av3']
         
+        # au1 = hdulist['EVENTS'].data['au1']
+        # au2 = hdulist['EVENTS'].data['au2']
+        # au3 = hdulist['EVENTS'].data['au3']
+        # amp_sf = hdulist['EVENTS'].data['amp_sf'] # reading in amplifier scaling factor
+
         img_head    = hdulist[1].header # header
         obs_id      = img_head['OBS_ID'] # observation id of the event
         tstart      = img_head['TSTART'] # the start and...
@@ -148,42 +162,39 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
         ra_centre, ra_centre_rad = img_head['RA_NOM'], np.deg2rad(img_head['RA_NOM']) # the RA of Jupiter at the centre of the chip is read in as...
         dec_centre, dec_centre_rad = img_head['DEC_NOM'], np.deg2rad(img_head['DEC_NOM']) #... well as Jupitr's DEC
     
-    # Horizons search code courtesy of Brad Snios
-    # The start and end times are taken from the header
-    start_time = Time(tstart, format='cxcsec')
-    stop_time = Time(tend, format='cxcsec')
-    delta_time = '1m'
-    eph_jup = gca_tools.fetch_ephemerides_fromCXO(start_time, stop_time, delta_time)
+   
+    # # !!!!! Untouched
+    # # Extracts relevent information needed from ephermeris file
+    # cml_spline_jup = scipy.interpolate.UnivariateSpline(eph_jup['datetime_jd'], eph_jup['PDObsLon'],k=1)
+    # lt_jup = eph_jup['lighttime']
+    # sub_obs_lon_jup = eph_jup['PDObsLon']
+    # sub_obs_lat_jup = eph_jup['PDObsLat']
     
-    # !!!!! Untouched
-    # Extracts relevent information needed from ephermeris file
-    cml_spline_jup = scipy.interpolate.UnivariateSpline(eph_jup['datetime_jd'], eph_jup['PDObsLon'],k=1)
-    lt_jup = eph_jup['lighttime']
-    sub_obs_lon_jup = eph_jup['PDObsLon']
-    sub_obs_lat_jup = eph_jup['PDObsLat']
+    # # Adding angular diameter from JPL Horizons to use later to define radius of circular region within which photons are kept
+    # ang_diam = max(eph_jup['ang_width'])
     
-    # Adding angular diameter from JPL Horizons to use later to define radius of circular region within which photons are kept
-    ang_diam = max(eph_jup['ang_width'])
+    # # Also adding tilt angle of Jupiter with respect to true North Pole
+    # tilt_ang = np.mean(eph_jup['NPole_ang'])
     
-    # Also adding tilt angle of Jupiter with respect to true North Pole
-    tilt_ang = np.mean(eph_jup['NPole_ang'])
+    # # Do we really need to write this to file?
+    # # saving angular diameter and tilt angle in text file in order to plot ellipse in post-processing
+    # np.savetxt(str(obs_dir) + f'/{obs_id}_JPL_ellipse_vals.txt', np.c_[ang_diam, tilt_ang], delimiter=',', header='angular diameter (arcsec),tilt angle (deg)', fmt='%s')
     
-    # saving angular diameter and tilt angle in text file in order to plot ellipse in post-processing
-    np.savetxt(str(obs_dir) + f'/{obs_id}_JPL_ellipse_vals.txt', np.c_[ang_diam, tilt_ang], delimiter=',', header='angular diameter (arcsec),tilt angle (deg)', fmt='%s')
+    # eph_dates = pd.to_datetime(eph_jup['datetime_str'])
+    # eph_dates = pd.DatetimeIndex(eph_dates)
+    # eph_doy = np.array(eph_dates.strftime('%j')).astype(int)
+    # eph_hours = eph_dates.hour
+    # eph_minutes = eph_dates.minute
+    # eph_seconds = eph_dates.second
     
-    eph_dates = pd.to_datetime(eph_jup['datetime_str'])
-    eph_dates = pd.DatetimeIndex(eph_dates)
-    eph_doy = np.array(eph_dates.strftime('%j')).astype(int)
-    eph_hours = eph_dates.hour
-    eph_minutes = eph_dates.minute
-    eph_seconds = eph_dates.second
+    # eph_DOYFRAC_jup = gca_tools.doy_frac(eph_doy, eph_hours, eph_minutes, eph_seconds) # DOY fraction from ephermeris data
     
-    eph_DOYFRAC_jup = gca_tools.doy_frac(eph_doy, eph_hours, eph_minutes, eph_seconds) # DOY fraction from ephermeris data
+    # jup_time = (eph_DOYFRAC_jup - evt_DOYFRAC)*86400.0 + tstart # local tiem of Jupiter
     
-    jup_time = (eph_DOYFRAC_jup - evt_DOYFRAC)*86400.0 + tstart # local tiem of Jupiter
     
-    # !!!!! END Untouched
-    
+    # %%===========================================================================
+    # Locate the planet on the chip
+    # =============================================================================
     # Select Region for analysis
     
     # Plots the photons (x,y) position on a grid of defined size in arcseconds 
@@ -197,131 +208,540 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
             keyx = key
         if val == 'y':
             keyy = key
-    skyx_center = img_head['TCRPX'+keyx[5:]]
-    skyy_center = img_head['TCRPX'+keyy[5:]]
-    skyx_scaling = np.abs(img_head['TCDLT'+keyx[5:]] * 3600) # in "/pixel
-    skyy_scaling = np.abs(img_head['TCDLT'+keyy[5:]] * 3600) # in "/pixel
+    detx_center = img_head['TCRPX'+keyx[5:]]
+    dety_center = img_head['TCRPX'+keyy[5:]]
+    detx_scaling = img_head['TCDLT'+keyx[5:]] * 3600 # in "/pixel
+    dety_scaling = img_head['TCDLT'+keyy[5:]] * 3600 # in "/pixel
     
-    # !!!! NB: skyx_scaling is negative, introducing a flip in the image...
-    # !!!! I don't know if this is potentially desirable or not...
+    corrected_events.loc[:, 'tar_x'] = (cev['x'] - detx_center) * detx_scaling
+    corrected_events.loc[:, 'tar_y'] = (cev['y'] - dety_center) * dety_scaling
+    # bigxarr_region = (bigxarr - skyx_center) * skyx_scaling
+    # bigyarr_region = (bigyarr - skyy_center) * skyy_scaling
     
-    bigxarr_region = (bigxarr - skyx_center) * skyx_scaling
-    bigyarr_region = (bigyarr - skyy_center) * skyy_scaling
+    # %% PSF Calculations =====================================================
+    # If we're more than ~1 arcminute off-axis, model the PSF with marx
+    # =========================================================================
+    ΔRA = img_head['RA_TARG'] - img_head['RA_NOM']
+    ΔDEC = img_head['DEC_TARG'] - img_head['DEC_NOM']
+    off_axis = np.sqrt(ΔRA **2 + ΔDEC**2) * u.degree
     
+    # Only use the default if we're on-axis and the user asked for it
+    if (default_psf == True) & (off_axis < 1*u.arcminute):
+        default_psf = True
+    else:
+        default_psf = False
+    
+    # Get the appropriate covariance matrix for the observing ellipse
+    if default_psf == False:
+        psf_cov = psf_from_header(img_head, obs_dir)
+    
+    else:
+        psf_sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
+        psf_cov = np.array([[psf_sigma, 0], [0, psf_sigma]])
+        
+    
+    # %%===========================================================================
+    #     
+    # =============================================================================
     # storing all photon data in text file - need this to calculate area for samp distributions later on
     # np.savetxt(str(obs_dir) + r"/%s_all_photons.txt" % obs_id, np.c_[bigxarr_region, bigyarr_region, bigtime, bigchannel, samp, sumamps, pi_cal, amp_sf, av1, av2, av3, au1, au2, au3])
+        
+
     
-    # Equations for defining ellipse region
-    tilt_ang_rad = np.deg2rad(tilt_ang)
-    R_eq_as = (ang_diam/2.)/np.cos(tilt_ang_rad) # equatorial radius of Jupiter in arcsecs
-    R_pol_as = R_eq_as * np.sqrt(1 - ecc**2) # polar radius of Jupiter in arcsecs
+    tar_xmin, tar_xmax = -50, 50
+    tar_ymin, tar_ymax = -50, 50
+    cmin, cmax = 0, cev['channel'].max()
+    region_query = "(@tar_xmin <= tar_x <= @tar_xmax) & " + \
+                   "(@tar_ymin <= tar_y <= @tar_ymax) & " + \
+                   "(@cmin <= channel <= @cmax)"
+    region_events = rev = corrected_events.query(region_query).copy()
+    
+    # Horizons search code courtesy of Brad Snios
+    # The start and end times are taken from the header
+    start_time = Time(tstart, format='cxcsec')
+    stop_time = Time(tend, format='cxcsec')
+    delta_time = '1m'
+    eph = gca_tools.fetch_ephemerides_fromCXO(start_time, stop_time, delta_time)
+    
+    # Get ephemeris data for each photon event
+    eph_t = Time(eph['datetime_jd'], format='jd').cxcsec
+    
+    rev['sublon'] = np.interp(rev['t'], eph_t, eph['PDObsLon'])
+    rev['sublat'] = np.interp(rev['t'], eph_t, eph['PDObsLat'])
+    rev['NPPA'] = np.interp(rev['t'], eph_t, eph['NPole_ang'])
+    rev['NPDist'] = np.interp(rev['t'], eph_t, eph['NPole_dist'])
+    
+    rev['R_eq'] = np.interp(rev['t'], eph_t, eph['ang_width']/2)
+    rev['R_rot'] = rev['R_eq'] * (1 - flattening)
+    rev['R_NS'] = apparent_size(rev['R_eq'], rev['R_rot'], rev['sublat'])/2
+    
+    rev['R_eq_emiss'] = (R_eq_0 + alt) * (rev['R_eq'] / R_eq_0)
+    rev['R_rot_emiss'] = rev['R_eq_emiss'] * (1 - flattening)
+    rev['R_NS_emiss'] = apparent_size(rev['R_eq_emiss'], rev['R_rot_emiss'], rev['sublat'])/2
+    
+    # Get pointing and dither data for each event
+    dither_filepath = Path(corrected_event_filepath).parent / 'pcadf{0}_???N???_asol1.fits'.format(obs_id)
+   
+    # Read the dither information
+    with astropy.io.fits.open(glob.glob(str(dither_filepath))[0]) as hdul:
+        dither_header =  hdul[1].header
+        dither_data = hdul[1].data
+    
+    rev['RA_target'] = np.interp(rev['t'], eph_t, eph['RA'])
+    rev['DEC_target'] = np.interp(rev['t'], eph_t, eph['DEC'])
+    rev['RA_pointing'] = np.interp(rev['t'], dither_data['time'], dither_data['ra'])
+    rev['DEC_pointing'] =  np.interp(rev['t'], dither_data['time'], dither_data['dec'])
+    rev['RA_offset'] = - (rev['RA_pointing'] - img_head['RA_NOM'])
+    rev['DEC_offset'] = - (rev['DEC_pointing'] - img_head['DEC_NOM'])
+    
+    # =============================================================================
+    # Plot the selected region, with references for Jupiter and PSF
+    # =============================================================================
+    jupiter_facecolor = (*colors.to_rgba('xkcd:peach')[0:3], 0.5)
+    # Get an ellipse for Jupiter's limb
+    limb_ellipse = get_JupiterPatch(r_eq = rev['R_eq_emiss'].max(),
+                                    nppa = rev['NPPA'].mean(),
+                                    sublat = rev['sublat'].mean(),
+                                    edgecolor='xkcd:peach', facecolor=jupiter_facecolor, linewidth=1)
+   
+    # Also plot a line representing the north rotation pole
+    # Get the vertex position of the ellipse (end of minor axis)
+    v = limb_ellipse.get_co_vertices()
+    # Get a vector going from the north pole position to 1.25
+    npole_vec = np.array([rev['NPDist'].mean()/np.linalg.norm(v[0]), 1.25])
     
     
-    # define the x, y, and pha channel limits 
-    xlimits, ylimits = [-50,50], [-50,50]
-    cha_min = 0
-    cha_max = max(bigchannel)
-    
-    # the photon data is stored in a pandas dataframe 
-    evt_df = pd.DataFrame({'time': bigtime, 'x': bigxarr, 'y': bigyarr, 'pha': bigchannel})
-    
-    # defines the region the photons will be selected from
-    indx = gca_tools.select_region(xlimits[0], xlimits[1],ylimits[0], ylimits[1],bigxarr_region,bigyarr_region,bigchannel,cha_min,cha_max)
-    
-    # find the x and y position of the photons
-    x_ph = bigxarr_region[indx]
-    y_ph = bigyarr_region[indx]
-    
-    # plots the selected region (sanity check: Jupiter should be in the centre)
-    fig, ax = plt.subplots(figsize=(8,8))
-    
-    # Plot (circular) region for extraction
-    # import matplotlib.patches as patches
-    # circle = patches.Circle((0, 0), ang_diam/2, color='xkcd:peach', alpha=0.66)
-    # limb_ellipse = patches.Ellipse((0,0), R_eq_as*2, R_pol_as*2, angle=tilt_ang, 
-    #                        edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
-    limb_ellipse = get_JupiterPatch(eph_jup, 
-                                    edgecolor='red', facecolor='xkcd:peach', alpha=0.50, linewidth=3)
+    fig, ax = plt.subplots(figsize=(4,4))
+
+    # Add Jupiter and rotational axis
+    ax.plot(npole_vec * v[0][0], npole_vec  * v[0][1],
+            color='black', lw=1)
     ax.add_patch(limb_ellipse)
     
-    ax.scatter(x_ph, y_ph, marker='.', s=1, linestyle='None', color='xkcd:navy blue')
-    ax.set(title='Selected Region (ObsID %s)' % obs_id, 
-            xlim = xlimits, ylim = ylimits)
-    print('')
-    print('')
-    print('Once you are happy with the selected region, close the figure window to continue analysis')
-    print('')
-    print('')
+    # Add photons
+    ax.scatter(rev['tar_x'], rev['tar_y'], 
+               marker='.', s=3, lw=0, alpha=1, color='xkcd:navy blue')
+    
+    # Add a patch to show the PSF
+    ax_inset = ax.inset_axes([-40, -40, 10, 10], transform=ax.transData)
+    psf_eigenvals, psf_eigenvecs = np.linalg.eig(psf_cov)
+    psf_patch = patches.Ellipse(
+        (0, 0), width=max(psf_eigenvals), height=min(psf_eigenvals), 
+        angle = np.rad2deg(np.arctan2(max(psf_eigenvals) - psf_cov[0,0], psf_cov[0,1])),
+        color='xkcd:blue', lw=0, alpha=0.75)
+    ax_inset.add_patch(psf_patch)
+    ax_inset.annotate('PSF:', (0,1), (0.1,-0.1), 
+                      xycoords = 'axes fraction', textcoords='offset fontsize', 
+                      ha='left', va='top', fontsize='small')
+    ax_inset.set(aspect=1, xlim=[5, -5], ylim=[-5,5])
+    ax_inset.get_xaxis().set_visible(False)
+    ax_inset.get_yaxis().set_visible(False)
+    
+    title_string = 'Selected Region (ObsID {})\n{}--{}'.format(
+        obs_id, 
+        Time(img_head['TSTART'], format='cxcsec').to_datetime().strftime('%Y-%m-%d %H:%M:%S'), 
+        Time(img_head['TSTOP'], format='cxcsec').to_datetime().strftime('%Y-%m-%d %H:%M:%S'))
+    ax.set(title = title_string,
+           xlabel = r'Planet-centered $\alpha$ ["]', xlim = [tar_xmax, tar_xmin], 
+           ylabel = r'Planet-centered $\delta$ ["]', ylim = [tar_ymin, tar_ymax])
+
     plt.show()
     
-    # saves the selected region as a text file
-    # np.savetxt(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id, np.c_[x_ph, y_ph, bigtime[indx], bigchannel[indx], samp[indx], sumamps[indx], pi_cal[indx], amp_sf[indx], av1[indx], av2[indx], av3[indx], au1[indx], au2[indx], au3[indx]])
-    
-    # ph_data = astropy.io.ascii.read(str(obs_dir) + r"/%s_selected_region_ellipse.txt" % obs_id) # read in the selected region data and...
-    # ph_time = ph_data['col3'] #... define the time column
-    
-    # photon times are turned into an array and converted to datetime format
-    # np_times = np.array(ph_time)
-    # timeincxo = Time(np_times, format='cxcsec')
-    # chandra_evt_time = timeincxo.iso
-    # Chandra time then converted to a plotable format
-    # chandra_evt_time = Time(chandra_evt_time, format='iso', out_subfmt='date_hm')
-    # plot_time = Time.to_datetime(chandra_evt_time)
-    # print('')
-    # print('All observation will be analysed')
-    
     # =========================================================================
-    # Coordinate Transform for the whole Observation
+    # Save our progress so far
     # =========================================================================
-    # Convert from big-endian to native little-endian
-    events = pd.DataFrame({'t': bigtime[indx].astype(np.float64), 
-                           'x': x_ph.astype(np.float64),
-                           'y': y_ph.astype(np.float64),
-                           'channel': bigchannel[indx].astype(np.float64),
-                           'samp': samp[indx].astype(np.float64),
-                           'sumamp': sumamps[indx].astype(np.float64),
-                           'pi': pi_cal[indx].astype(np.float64),
-                           'amp_sf': amp_sf[indx].astype(np.float64),
-                           'av1': av1[indx].astype(np.float64), 
-                           'av2': av2[indx].astype(np.float64),
-                           'av3': av3[indx].astype(np.float64),
-                           'au1': au1[indx].astype(np.float64), 
-                           'au2': au2[indx].astype(np.float64), 
-                           'au3': au3[indx].astype(np.float64)})
     filepath = str(obs_dir)+ "/{}_selected_region_ellipse.csv".format(obs_id)
     with open(filepath, 'w') as f:
         f.write('#UNITS:  t(s), x(arcsec), y(arcsec), PHA, samp, sumamp, pi, amp_sf, av1, av2, av3, au1, au2, au3\n')
-        events.to_csv(f, header = True, index = False)
+        region_events.to_csv(f, header = True, index = False)
     
     # =============================================================================
     # SIII Coordinate Transformation
+    # Redeveloped from scratch by MJR Jan. 2026
     # =============================================================================
     
+    dsin = lambda x: np.sin(np.deg2rad(x))
+    dcos = lambda x: np.cos(np.deg2rad(x))
+    
+    # Rotate sky coords into Jupiter frame
+    rev['jup_x'] = rev['tar_x']*dcos(rev['NPPA']) - rev['tar_y']*dsin(rev['NPPA'])
+    rev['jup_y'] = rev['tar_x']*dsin(rev['NPPA']) + rev['tar_y']*dcos(rev['NPPA'])
+    
+    # We have the x and y coordinates of each photon, but the inverse eqns
+    # require simultaneously solivng multiple equations
+    
+    # Instead, interpolate from (lon, lat) -> (x, y)
+    λ_edge_arr = np.linspace(0, 360, 361) * u.degree
+    φ_edge_arr = np.linspace(-90, 90, 181) * u.degree
+    λ_edge_g, φ_edge_g = np.meshgrid(λ_edge_arr, φ_edge_arr, indexing='ij')
+    
+    λ_mid_arr = λ_edge_arr[:-1]/2 + λ_edge_arr[1:]/2
+    φ_mid_arr = φ_edge_arr[:-1]/2 + φ_edge_arr[1:]/2
+    λ_mid_g, φ_mid_g = λg, φg = np.meshgrid(λ_mid_arr, φ_mid_arr, indexing='ij')
+        
+    uvis_xy, chip2_xy = get_UVISPolygon()
+    nice_plots = False
+    
+    # Use the jupiter-frame photons to determine which events are on disk (or close enough to disk) to count
+    inclusion_factor = 1.2
+    on_disk_bool = (rev['jup_x']/rev['R_eq_emiss'].max())**2 + (rev['jup_y']/rev['R_NS_emiss'].max())**2 <= inclusion_factor**2
+    
+    emission_map_in_UVIS = np.zeros(λg.shape)
+    emission_map_out_UVIS = np.zeros(λg.shape)
+    visibility_map_in_UVIS = np.zeros(λg.shape)
+    visibility_map_out_UVIS = np.zeros(λg.shape)
+    time_of_previous_jupiter_photon = rev['t'].iloc[0]
+    
+    if nice_plots:
+        fig_anim, axs_anim = plt.subplots(figsize=(8,4), ncols=2)
+        frames_anim = []
+        axs_anim[0].set(
+            aspect=1, 
+            xlim=rev['RA_target'].mean() + np.array([0.1, -0.1]), xlabel = r'$\alpha$ [deg.]', 
+            ylim=rev['DEC_target'].mean() + np.array([-0.1, 0.1]), ylabel = r'$\delta$ [deg.]'
+            )
+        axs_anim[1].set(
+            aspect=1, 
+            xlim=[25,-25], xlabel = r'Jupiter-Centered $\alpha$ ["]', 
+            ylim=[-25,25], ylabel=r'Jupiter-Centered $\delta$ ["]'
+            )
+    
+    for index, event in tqdm.tqdm(rev.iterrows(), total=len(rev)):
+        
+        if on_disk_bool.loc[index] == True:
+        
+            # Sub-observer lon & lat
+            λ0 = event['sublon'] * u.degree
+            φ0 = event['sublat'] * u.degree
+            
+            # Visibility
+            cos_c = dsin(φ0) * dsin(φg) + dcos(φ0) * dcos(φg) * dcos(λg - λ0)
+
+            # Forward model (λ, φ) -> (x, y)
+            jup_xg_edge = event['R_eq_emiss']  * dcos(φ_edge_g) * dsin(λ_edge_g - λ0)
+            jup_yg_edge = event['R_NS_emiss'] * (dcos(φ0) * dsin(φ_edge_g) - dsin(φ0) * dcos(φ_edge_g) * dcos(λ_edge_g - λ0))
+            jup_xg = event['R_eq_emiss'] * dcos(φg) * dsin(λg - λ0)
+            jup_yg = event['R_NS_emiss'] * (dcos(φ0) * dsin(φg) - dsin(φ0) * dcos(φg) * dcos(λg - λ0))
+            
+            # Estimate apparent areas of each grid cell
+            d1 = np.sqrt((jup_xg_edge[0:-1, 0:-1] - jup_xg_edge[1:, 0:-1])**2 + (jup_yg_edge[0:-1, 0:-1] - jup_yg_edge[1:, 0:-1])**2)
+            d2 = np.sqrt((jup_xg_edge[0:-1, 0:-1] - jup_xg_edge[0:-1, 1:])**2 + (jup_yg_edge[0:-1, 0:-1] - jup_yg_edge[0:-1, 1:])**2)
+            areas = d1*d2 * u.arcsec**2
+            
+            # Rotate the xy grid into the TARGET frame
+            tar_xg = jup_xg*dcos(-event['NPPA']) - jup_yg*dsin(-event['NPPA'])
+            tar_yg = jup_xg*dsin(-event['NPPA']) + jup_yg*dcos(-event['NPPA'])
+            tar_xg_edge = jup_xg_edge*dcos(-event['NPPA']) - jup_yg_edge*dsin(-event['NPPA'])
+            tar_yg_edge = jup_xg_edge*dsin(-event['NPPA']) + jup_yg_edge*dcos(-event['NPPA'])
+            
+            # Scale the xy grid to the SKY frame
+            sky_xg_edge = tar_xg_edge/3600 + event['RA_target']
+            sky_yg_edge = tar_yg_edge/3600 + event['DEC_target']
+            
+            # Remove xy grid cells on the farside of the planet
+            visible_index = cos_c > 0
+            λg_vis = λg[visible_index]
+            φg_vis = φg[visible_index]
+            tar_xg_vis = tar_xg[visible_index]
+            tar_yg_vis = tar_yg[visible_index]
+            
+            # Generate a probability density function for photon origin
+            event_pdf = scipy.stats.multivariate_normal.pdf(
+                np.stack((tar_xg, tar_yg), axis=-1), 
+                mean = [event['tar_x'], event['tar_y']], cov = psf_cov)
+            event_pdf_vis = event_pdf[cos_c > 0]
+            
+            # Roll the UVIS polygon to the correct angle, then offset
+            sky_uvis_x = event['RA_pointing'] + uvis_xy[0]*dcos(img_head['ROLL_NOM']) - uvis_xy[1]*dsin(img_head['ROLL_NOM'])
+            sky_uvis_y = event['DEC_pointing'] + uvis_xy[0]*dsin(img_head['ROLL_NOM']) + uvis_xy[1]*dcos(img_head['ROLL_NOM'])
+            sky_uvis_xy = np.array([sky_uvis_x, sky_uvis_y])
+            
+            tar_uvis_x = (sky_uvis_x - event['RA_target']) * 3600
+            tar_uvis_y = (sky_uvis_y - event['DEC_target']) * 3600
+            tar_uvis_xy = np.array([tar_uvis_x, tar_uvis_y])
+            
+            sky_chip2_x = event['RA_pointing'] + chip2_xy[0]*dcos(img_head['ROLL_NOM']) - chip2_xy[1]*dsin(img_head['ROLL_NOM'])
+            sky_chip2_y = event['DEC_pointing'] + chip2_xy[0]*dsin(img_head['ROLL_NOM']) + chip2_xy[1]*dcos(img_head['ROLL_NOM'])
+            sky_chip2_xy = np.array([sky_chip2_x, sky_chip2_y])
+
+            tar_chip2_x = (sky_chip2_x - event['RA_target']) * 3600
+            tar_chip2_y = (sky_chip2_y - event['DEC_target']) * 3600
+            tar_chip2_xy = np.array([tar_chip2_x, tar_chip2_y])
+
+            if nice_plots == True:
+                
+                # To display, we need gridded data; set color to NaN on farside
+                event_pdf_fordisplay = event_pdf.copy()
+                event_pdf_fordisplay[cos_c <= 0] = np.nan
+                
+                uvis_fc = (*colors.to_rgba('xkcd:red')[0:3], 0.25)
+                
+                a1 = axs_anim[0].pcolormesh(sky_xg_edge.value, sky_yg_edge.value, event_pdf_fordisplay,
+                                        cmap='plasma')
+                
+                chip2_patch = patches.Polygon(sky_chip2_xy.T, ec='black', alpha=1, lw=1, fc='None')
+                a2 = axs_anim[0].add_patch(chip2_patch)
+                uvis_patch = patches.Polygon(sky_uvis_xy.T, fc=uvis_fc, ec='xkcd:red', lw=1)
+                a3 = axs_anim[0].add_patch(uvis_patch)
+                
+                a5 = axs_anim[1].pcolormesh(tar_xg_edge.value, tar_yg_edge.value, event_pdf_fordisplay,
+                                        cmap='plasma')
+                
+                chip2_patch = patches.Polygon(tar_chip2_xy.T, ec='black', alpha=1, lw=1, fc='None')
+                a6 = axs_anim[1].add_patch(chip2_patch)
+                uvis_patch = patches.Polygon(tar_uvis_xy.T, fc=uvis_fc, ec='xkcd:red', lw=1)
+                a7 = axs_anim[1].add_patch(uvis_patch)
+                
+                artist_list = [a1, a2, a3, a5, a6, a7]
+                
+                frames_anim.append(artist_list)
+            
+            # Assign photons (& probabilities) to a map
+            import matplotlib.path as mpltPath
+            tar_UVIS_path = mpltPath.Path(tar_uvis_xy.T)
+            tar_xyg = np.array([tar_xg.flatten(), tar_yg.flatten()]).T
+            in_UVIS_index = tar_UVIS_path.contains_points(tar_xyg)
+            in_UVIS_index = in_UVIS_index.reshape(tar_xg.shape)
+            # tar_xyg_vis = np.array([tar_xg_vis, tar_yg_vis]).T
+            # in_UVIS_vis_index = tar_UVIS_path.contains_points(tar_xyg_vis)
+            
+            # The maximum of the PSF is the most likely photon location
+            # And determines the UVIS filter
+            pdf_max_indx = event_pdf_vis.argmax()
+            rev.loc[index, 'lon'] = λg_vis[pdf_max_indx].value
+            rev.loc[index, 'lat'] = φg_vis[pdf_max_indx].value
+            rev.loc[index, 'in_UVIS'] = in_UVIS_index[visible_index][pdf_max_indx]
+            
+            # Also create a map based on the full PDF
+            emap_in_UVIS = np.zeros(emission_map_in_UVIS.shape)
+            emap_out_UVIS = np.zeros(emission_map_out_UVIS.shape)
+            
+            emap_in_UVIS[visible_index & in_UVIS_index] = event_pdf_vis[in_UVIS_index[visible_index]]
+            emap_out_UVIS[visible_index & ~in_UVIS_index] = event_pdf_vis[~in_UVIS_index[visible_index]]
+            
+            # Emission map has units of counts/arcsec^2
+            emission_map_in_UVIS += emap_in_UVIS
+            emission_map_out_UVIS += emap_out_UVIS
+            
+            # Estimate the time each grid cell has been visible in/out UVIS
+            elapsed_time = event['t'] - time_of_previous_jupiter_photon
+            visibility_map_in_UVIS[visible_index & in_UVIS_index] += elapsed_time
+            visibility_map_out_UVIS[visible_index & ~in_UVIS_index] += elapsed_time
+            time_of_previous_jupiter_photon = event['t']
+        else:
+            
+            # event_lon.append(np.nan * u.degree)
+            # event_lat.append(np.nan * u.degree)
+            rev.loc[index, 'lon'] = np.nan
+            rev.loc[index, 'lat'] = np.nan
+            
+    if nice_plots:
+        # You MUST let this run after the loop for collection of plots...
+        import matplotlib.animation as animation
+        import time
+        t0 = time.time()
+        anim = animation.ArtistAnimation(fig_anim, frames_anim, interval=100, blit=True)
+        anim.save('animation.mp4', writer='ffmpeg', fps=30)
+        print(time.time() - t0)
+    
+    breakpoint()
+    # Show the emission maps, visibility maps, and emission density maps
+    fig, axs = plt.subplots(figsize=(6,6), nrows=2, sharex=True, sharey=True)
+    norm = colors.Normalize(
+        vmin=np.percentile([*emission_map_in_UVIS, *emission_map_out_UVIS], 25), 
+        vmax=np.percentile([*emission_map_in_UVIS, *emission_map_out_UVIS], 99))
+    m = axs[0].pcolormesh(λ_edge_g, φ_edge_g, emission_map_in_UVIS, 
+                          cmap='plasma', norm=norm)
+    m = axs[1].pcolormesh(λ_edge_g, φ_edge_g, emission_map_out_UVIS,
+                          cmap='plasma', norm=norm)
+    for ax in axs:
+        ax.set(
+            aspect = 1, 
+            xlim=[360, 0], xlabel = 'SIII Longitude [deg]', 
+            ylim=[-90,90], ylabel = 'Latitude [deg]')
+    axs[0].set(title = 'Inside UVIS Filter')
+    axs[1].set(title = 'Outside UVIS Filter')
+    fig.colorbar(m, ax=axs, orientation='horizontal', fraction=.1)
+    plt.show()
+    
+    # visibility maps
+    fig, axs = plt.subplots(figsize=(6,6), nrows=2, sharex=True, sharey=True)
+    norm = colors.Normalize(
+        vmin=np.percentile([*visibility_map_in_UVIS, *visibility_map_out_UVIS], 25), 
+        vmax=np.percentile([*visibility_map_in_UVIS, *visibility_map_out_UVIS], 99))
+    m = axs[0].pcolormesh(λ_edge_g, φ_edge_g, visibility_map_in_UVIS, 
+                          cmap='plasma', norm=norm)
+    m = axs[1].pcolormesh(λ_edge_g, φ_edge_g, visibility_map_out_UVIS,
+                          cmap='plasma', norm=norm)
+    for ax in axs:
+        ax.set(
+            aspect = 1, 
+            xlim=[360, 0], xlabel = 'SIII Longitude [deg]', 
+            ylim=[-90,90], ylabel = 'Latitude [deg]')
+    axs[0].set(title = 'Inside UVIS Filter')
+    axs[1].set(title = 'Outside UVIS Filter')
+    fig.colorbar(m, ax=axs, orientation='horizontal', fraction=.1)
+    plt.show()
+    
+    # emission density maps
+    emissdensity_in_UVIS = emission_map_in_UVIS / visibility_map_in_UVIS
+    emissdensity_out_UVIS = emission_map_out_UVIS / visibility_map_out_UVIS
+    fig, axs = plt.subplots(figsize=(6,6), nrows=2, sharex=True, sharey=True)
+    norm = colors.Normalize(
+        vmin=np.nanpercentile([*emissdensity_in_UVIS, *emissdensity_out_UVIS], 25), 
+        vmax=np.nanpercentile([*emissdensity_in_UVIS, *emissdensity_out_UVIS], 99))
+    m = axs[0].pcolormesh(λ_edge_g, φ_edge_g, emissdensity_in_UVIS, 
+                          cmap='plasma', norm=norm)
+    m = axs[1].pcolormesh(λ_edge_g, φ_edge_g, emissdensity_out_UVIS,
+                          cmap='plasma', norm=norm)
+    for ax in axs:
+        ax.set(
+            aspect = 1, 
+            xlim=[360, 0], xlabel = 'SIII Longitude [deg]', 
+            ylim=[-90,90], ylabel = 'Latitude [deg]')
+    axs[0].set(title = 'Inside UVIS Filter')
+    axs[1].set(title = 'Outside UVIS Filter')
+    fig.colorbar(m, ax=axs, orientation='horizontal', fraction=.1, label='Counts / arcesec2 / s')
+    plt.show()
+    
+    
+    rough_me_lon = np.arange(140, 290+10, 10)
+    rough_me_lat = np.array([84.94, 73.46, 56.32, 54.65, 55.43, 57.44, 60.11, 
+                             63.19, 66.21, 69.24, 72.47, 75.27, 77.66, 80.00, 
+                             82.64, 86.78])
+    
+    fig, ax = plt.subplots(figsize=(6,6), nrows=1, sharex=True, sharey=True)
+    m = ax.pcolormesh(λ_edge_g, φ_edge_g, emissdensity_out_UVIS - emissdensity_in_UVIS, 
+                          cmap='plasma', vmin=-0.0001, vmax=0.0001)
+    ax.set(
+        aspect = 1, 
+        xlim=[360, 0], xlabel = 'SIII Longitude [deg]', 
+        ylim=[-90,90], ylabel = 'Latitude [deg]')
+    ax.plot(rough_me_lon, rough_me_lat, color='black', lw=2)
+    fig.colorbar(m, ax=ax, orientation='horizontal', fraction=.1, label='Counts / arcesec2 / s')
+    plt.show()
+    
+    breakpoint()
+    
+    # # Compute visibility over time
+    # visibility_map_in_UVIS = np.zeros(λg.shape)
+    # visibility_map_out_UVIS = np.zeros(λg.shape)
+    # time_range = np.linspace(0, rev['t'].iloc[-1] - rev['t'].iloc[0], int(1e3))
+    # for delta_t in time_range[:-1]:
+    #     # Compute which lon/lat grid cells are visible at this time
+    #     # Sub-observer point on the planet, and (equatorial) radius
+    #     λ0 = np.interp(rev['t'].iloc[0] + delta_t, eph_t, eph['PDObsLon']) * u.degree
+    #     # λ0_ = 360 * u.degree - λ0
+    #     φ0 =  np.interp(rev['t'].iloc[0] + delta_t, eph_t, eph['PDObsLat']) * u.degree
+            
+    #     # Visibility
+    #     cos_c = dsin(φ0) * dsin(φg) + dcos(φ0) * dcos(φg) * dcos(λg - λ0)
+        
+    #     # If visible, add delta_t to visibility_map
+    #     visibility_map[cos_c > 0] += time_range[1]
+    
+    # Emission density in counts/s/arcsec^2
+    visibility_map_for_denominator = vmfd = visibility_map.copy()
+    vmfd[vmfd == 0] = 1
+    emission_density_map = emission_map / vmfd
+    
+    total_area = (sky_xmax - sky_xmin) * (sky_ymax - sky_ymin)
+    ellipse_exlusion_area = np.pi * (rev['R_eq_emiss'].max() * rev['R_NS_emiss'].max()) * (inclusion_factor**2)
+    background_area = total_area - ellipse_exlusion_area
+    background = rev[~on_disk_bool]['t'].count() / background_area
+    background_emission_density = background / (rev['t'].iloc[-1] - rev['t'].iloc[0])
+    
+    breakpoint()
+    print('HELP!')
+    
+    
+    # Load file for comaprison
+    path = '/Users/mrutala/projects/Jupiter_XUV_Comparison/data/CXO/{0}/primary/{0}_photonlist_full_obs_ellipse.csv'.format(obs_id)
+    comparison_df = pd.read_csv(path, comment='#')
+    
+    rough_me_lon = np.arange(140, 290+10, 10)
+    rough_me_lat = np.array([84.94, 73.46, 56.32, 54.65, 55.43, 57.44, 60.11, 
+                             63.19, 66.21, 69.24, 72.47, 75.27, 77.66, 80.00, 
+                             82.64, 86.78])
+    
+    fig, axs = plt.subplots(figsize=(4,4), nrows=2)
+    
+    axs[0].scatter(comparison_df['lon'], comparison_df['lat'], 
+                   color='black', marker='o', s=2, lw=0, label='Earlier Versions')
+    
+    axs[1].scatter(rev['lon'], rev['lat'], 
+                   color='xkcd:red', marker='o', s=2, lw=0, label='New Version')
+    
+    for ax in axs:
+        ax.plot(rough_me_lon, rough_me_lat, color='xkcd:blue', lw=1)
+    
+    for ax in axs:
+        ax.set(aspect=1, xlim=[360, 0], ylim=[-90, 90])
+    plt.show()
+    
+    breakpoint()
+    fig, ax = plt.subplots()
+    ax.scatter(comparison_df['x'], comparison_df['y'], color='black', marker='.', s=1)
+    ax.scatter(comparison_df['x'], comparison_df['y'], 
+               color='red', marker='o', s=6, facecolor='none')
+    ax.set(aspect=1, xlim=[20, -20], ylim=[-20, 20],
+           xlabel='RA ["]', ylabel='Dec ["]')
+    plt.show()
+    
+    
+    
+    fig, ax = plt.subplots()
+    ax.scatter(comparison_df['lon'], comparison_df['lat'], color='red', marker='o', s=2)
+    ax.set(aspect=1, xlim=[0, 360], ylim=[-90, 90], 
+           xlabel='Longitude [deg]', ylabel='Latitude [deg]')
+    plt.show()
+    
+    
+    
+    
+    # rev['lon'] = 360 - np.array(event_lon)
+    # rev['lat'] = event_lat
+    
+    fig, ax = plt.subplots()
+    ax.scatter(rev['sky_x'], rev['sky_y'], color='black', marker='.', s=1)
+    ax.scatter(rev.dropna()['sky_x'], rev.dropna()['sky_y'], 
+               color='red', marker='o', s=6, facecolor='none')
+    ax.set(aspect=1, xlim=[20, -20], ylim=[-20, 20],
+           xlabel='RA ["]', ylabel='Dec ["]')
+    plt.show()
+    
+    fig, ax = plt.subplots()
+    ax.scatter(rev['lon'], rev['lat'], color='red', marker='o', s=2)
+    ax.set(aspect=1, xlim=[0, 360], ylim=[-90, 90], 
+           xlabel='Longitude [deg]', ylabel='Latitude [deg]')
+    plt.show()
+    
+    breakpoint()
     # Super events tracks interpolated quantities that we don't need to save
-    sev = super_events = events.copy(deep=True)
-    sev['t_jd'] = Time(sev['t'], format='cxcsec').jd
-    sev['t_mjd'] = Time(sev['t'], format='cxcsec').mjd
-    sev['NPPA'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['NPole_ang'])
-    # sev['NPPD'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['NPole_dist'])
-    sev['ang_width'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['ang_width'])
-    sev['theta_pd'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['PDObsLat'])
+    # sev = super_events = events.copy(deep=True)
+    # sev['t_jd'] = Time(sev['t'], format='cxcsec').jd
+    # sev['t_mjd'] = Time(sev['t'], format='cxcsec').mjd
+    # sev['NPPA'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['NPole_ang'])
+    # # sev['NPPD'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['NPole_dist'])
+    # sev['ang_width'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['ang_width'])
+    # sev['theta_pd'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['PDObsLat'])
     
     
-    # Only keep photons that originate within Jupiter's disk
-    emission_altitude_scaling = (rad_eq_0 + alt)/rad_eq_0
-    sev['sky_R_eq'] = emission_altitude_scaling * sev['ang_width'] / 2
-    sev['sky_R_ro'] = emission_altitude_scaling * np.sqrt(1 - ecc**2) * sev['ang_width'] / 2
-    sev['theta_pc'] = np.arctan2((sev['sky_R_ro']**2) * np.tan(sev['theta_pd']*dtor), 
-                                 (sev['sky_R_eq']**2)) * rtod
+    # # Only keep photons that originate within Jupiter's disk
+    # emission_altitude_scaling = (rad_eq_0 + alt)/rad_eq_0
+    # sev['sky_R_eq'] = emission_altitude_scaling * sev['ang_width'] / 2
+    # sev['sky_R_ro'] = emission_altitude_scaling * np.sqrt(1 - ecc**2) * sev['ang_width'] / 2
+    # sev['theta_pc'] = np.arctan2((sev['sky_R_ro']**2) * np.tan(sev['theta_pd']*dtor), 
+    #                              (sev['sky_R_eq']**2)) * rtod
     
-    # # define the local time and central meridian latitude (CML) during the observation  
-    # jup_time = (eph_DOYFRAC_jup - evt_DOYFRAC)*86400.0 + tstart
-    # jup_cml_0 = float(eph_jup['PDObsLon'][0]) + j_rotrate * (jup_time - jup_time[0])
-    # interpfunc_cml = interpolate.interp1d(jup_time, jup_cml_0)
+    # # # define the local time and central meridian latitude (CML) during the observation  
+    # # jup_time = (eph_DOYFRAC_jup - evt_DOYFRAC)*86400.0 + tstart
+    # # jup_cml_0 = float(eph_jup['PDObsLon'][0]) + j_rotrate * (jup_time - jup_time[0])
+    # # interpfunc_cml = interpolate.interp1d(jup_time, jup_cml_0)
     
-    # jup_cml = interpfunc_cml(events['t'])
-    # jup_cml = np.deg2rad(jup_cml % 360)
-    sev['CML'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], np.unwrap(eph_jup['PDObsLon'], period=360)) % 360
+    # # jup_cml = interpfunc_cml(events['t'])
+    # # jup_cml = np.deg2rad(jup_cml % 360)
+    # sev['CML'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], np.unwrap(eph_jup['PDObsLon'], period=360)) % 360
     
     
     # find sublat of Jupiter during each Chandra time interval
@@ -331,40 +751,21 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     # find the distance between Jupiter and Chandra throughout the observation, convert to km
     # interpfunc_dist = interpolate.interp1d(jup_time, (eph_jup['delta'].astype(float))*au_to_m*1e-3)
     # jup_dist = interpfunc_dist(events['t'])
-    sev['dist'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['delta']) * au_to_m * 1e-3
+    # sev['dist'] = np.interp(sev['t_jd'], eph_jup['datetime_jd'], eph_jup['delta']) * au_to_m * 1e-3
     
-    # dist = sum(jup_dist)/len(jup_dist)
-    # kmtoarc = np.rad2deg(1.0/dist)*3.6E3 # convert from km to arc
-    # kmtopixels = kmtoarc/skyx_scaling # convert from km to pixels using defined scale
-    sev['pix_R_eq'] = sev['sky_R_eq'] / skyx_scaling
-    sev['pix_R_ro'] = sev['sky_R_ro'] / skyx_scaling
+    # # dist = sum(jup_dist)/len(jup_dist)
+    # # kmtoarc = np.rad2deg(1.0/dist)*3.6E3 # convert from km to arc
+    # # kmtopixels = kmtoarc/skyx_scaling # convert from km to pixels using defined scale
+    # sev['pix_R_eq'] = sev['sky_R_eq'] / np.abs(skyx_scaling)
+    # sev['pix_R_ro'] = sev['sky_R_ro'] / np.abs(skyx_scaling)
 
     # rad_eq = rad_eq_0 * kmtopixels
     # rad_pole = rad_pole_0 * kmtopixels # convert both radii form km -> pixels
     # alt0 = alt * kmtopixels # altitude at which we think emission occurs - agreed in Southampton Nov 15th 2017
     
-    # The apparent size along sky North-South is the max. of the rotated ellipse
-    def apparent_size(a, b, theta):
-        a, b, theta = np.array(a), np.array(b), np.array(theta)
-        θ = theta * dtor
-        n = 1000
-        # Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0
-        A = np.tile((a**2 * np.sin(θ)**2) + (b**2 * np.cos(θ)**2), (n,1))
-        B = np.tile(2 * (b**2 - a**2) * np.sin(θ) * np.cos(θ), (n,1))
-        C = np.tile((a**2 * np.cos(θ)**2) + (b**2 * np.sin(θ)**2), (n,1))
-        D = 0
-        E = 0
-        F = np.tile(- a**2 * b**2, (n,1))
+    
         
-        # Rather than optimizing, just try a load of test points
-        x = np.linspace(-a, a, 1000)
-        if len(x.shape) == 1: x = x[:, np.newaxis]
-        y0 = (-B*x + np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
-        # y1 = (-B*x - np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
-        
-        return 2*np.nanmax(y0, axis=0)
-        
-    sev['sky_R_NS'] = apparent_size(sev['sky_R_eq'], sev['sky_R_ro'], sev['theta_pc'])/2
+    # sev['sky_R_NS'] = apparent_size(sev['sky_R_eq'], sev['sky_R_ro'], sev['theta_pc'])/2
   
     jup_sublat = sev['theta_pd']
     rad_eq = sev['pix_R_eq'].mean()
@@ -387,75 +788,11 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     # =============================================================================
     #     # Do the reverse orthographic projection yourself...
     # =============================================================================
-    # Rotate sky coords into Jupiter frame (so negative angle)
-    sev['xr'] = sev['x']*np.cos(-sev['NPPA']*dtor) - sev['y']*np.sin(-sev['NPPA']*dtor)
-    sev['yr'] = sev['x']*np.sin(-sev['NPPA']*dtor) + sev['y']*np.cos(-sev['NPPA']*dtor)
     
     
     
-    # We have the x and y coordinates of each photon, but the inverse eqns
-    # require simultaneously solivng multiple equations
     
-    # Instead, interpolate from (lon, lat) -> (x, y)
-    lon_arr = np.linspace(0, 360, 361)
-    lat_arr = np.linspace(-90, 90, 181)
-    
-    lon_grid, lat_grid = np.meshgrid(lon_arr, lat_arr, indexing='ij')
-    
-    λ, φ = lon_grid * dtor, lat_grid * dtor
-    
-    on_disk_bool = (sev['xr']/sev['sky_R_eq'])**2 + (sev['yr']/sev['sky_R_NS'])**2 <= 1
-    
-    event_lon, event_lat = [], []
-    for index, event in sev.iterrows():
-        
-        if on_disk_bool.loc[index] == True:
-        
-            # Sub-observer point on the planet, and (equatorial) radius
-            λ0, φ0 = (360 - event['CML']) * dtor, event['theta_pc'] * dtor
-            R_eq_app = event['sky_R_eq'] 
-            R_ns_app = event['sky_R_NS']
-            
-            # Visibility
-            cos_c = np.sin(φ0) * np.sin(φ) + np.cos(φ0) * np.cos(φ) * np.cos(λ - λ0)
-        
-            # 
-            x = R_eq_app * np.cos(φ) * np.sin(λ - λ0)
-            y = R_ns_app * (np.cos(φ0) * np.sin(φ) - np.sin(φ0) * np.cos(φ) * np.cos(λ - λ0))
-            
-            test = np.abs(x - event['xr']) + np.abs(y - event['yr'])
-            test[cos_c <= 0] = np.nan
-            indx = np.where(test == np.nanmin(test))
-            
-            # For now, assumer 1-deg-resolution is enough
-            # otherwise we'd need to interpolate
-            event_lon.append(lon_grid[indx][0])
-            event_lat.append(lat_grid[indx][0])
-            
-        
-            # breakpoint()
-            # Check photon x/y vs lon/lat
-        else:
-            
-            event_lon.append(np.nan)
-            event_lat.append(np.nan)
-        
-    sev['lon'] = 360 - np.array(event_lon)
-    sev['lat'] = event_lat
-    
-    fig, ax = plt.subplots()
-    ax.scatter(sev['x'], sev['y'], color='black', marker='.', s=1)
-    ax.scatter(sev.dropna()['x'], sev.dropna()['y'], 
-               color='red', marker='o', s=6, facecolor='none')
-    ax.set(aspect=1, xlim=[20, -20], ylim=[-20, 20],
-           xlabel='RA ["]', ylabel='Dec ["]')
-    plt.show()
-    
-    fig, ax = plt.subplots()
-    ax.scatter(sev['lon'], sev['lat'], color='red', marker='o', s=2)
-    ax.set(aspect=1, xlim=[0, 360], ylim=[-90, 90], 
-           xlabel='Longitude [deg]', ylabel='Latitude [deg]')
-    plt.show()
+ 
     
     
     # Compare to original method
@@ -514,7 +851,9 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     lngon = lng[condition]
     
     # Define the limb of Jupiter, to ensure only auroral photons are selected for analysis
-    cosmu = gca_tools.findcosmu(rad_eq, rad_pole, phi1, np.deg2rad(lat), np.deg2rad(lng))
+    # breakpoint()
+    # cosmu = gca_tools.findcosmu(rad_eq, rad_pole, phi1, np.deg2rad(lat), np.deg2rad(lng))
+    cosmu = gca_tools.findcosmu(sev['sky_R_eq'].mean(), sev['sky_R_ro'].mean(), phi1, np.deg2rad(lat), np.deg2rad(lng))
     limb = np.where(abs(cosmu) < 0.05)
     
     # This next step creates the parameters used to plot what is measured on Jupiter. In the code, I define this as "props" (properties)
@@ -586,26 +925,26 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     sev['theta_pc'] = np.arctan2((sev['sky_R_ro']**2) * np.tan(sev['theta_pd']*dtor), 
                                  (sev['sky_R_eq']**2)) * rtod
     
-    # The apparent size along sky North-South is the max. of the rotated ellipse
-    def apparent_size(a, b, theta):
-        a, b, theta = np.array(a), np.array(b), np.array(theta)
-        θ = theta * dtor
-        n = 1000
-        # Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0
-        A = np.tile((a**2 * np.sin(θ)**2) + (b**2 * np.cos(θ)**2), (n,1))
-        B = np.tile(2 * (b**2 - a**2) * np.sin(θ) * np.cos(θ), (n,1))
-        C = np.tile((a**2 * np.cos(θ)**2) + (b**2 * np.sin(θ)**2), (n,1))
-        D = 0
-        E = 0
-        F = np.tile(- a**2 * b**2, (n,1))
+    # # The apparent size along sky North-South is the max. of the rotated ellipse
+    # def apparent_size(a, b, theta):
+    #     a, b, theta = np.array(a), np.array(b), np.array(theta)
+    #     θ = theta * dtor
+    #     n = 1000
+    #     # Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0
+    #     A = np.tile((a**2 * np.sin(θ)**2) + (b**2 * np.cos(θ)**2), (n,1))
+    #     B = np.tile(2 * (b**2 - a**2) * np.sin(θ) * np.cos(θ), (n,1))
+    #     C = np.tile((a**2 * np.cos(θ)**2) + (b**2 * np.sin(θ)**2), (n,1))
+    #     D = 0
+    #     E = 0
+    #     F = np.tile(- a**2 * b**2, (n,1))
         
-        # Rather than optimizing, just try a load of test points
-        x = np.linspace(-a, a, 1000)
-        if len(x.shape) == 1: x = x[:, np.newaxis]
-        y0 = (-B*x + np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
-        # y1 = (-B*x - np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
+    #     # Rather than optimizing, just try a load of test points
+    #     x = np.linspace(-a, a, 1000)
+    #     if len(x.shape) == 1: x = x[:, np.newaxis]
+    #     y0 = (-B*x + np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
+    #     # y1 = (-B*x - np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
         
-        return 2*np.nanmax(y0, axis=0)
+    #     return 2*np.nanmax(y0, axis=0)
         
     sev['sky_R_NS'] = apparent_size(sev['sky_R_eq'], sev['sky_R_ro'], sev['theta_pc'])/2
     
@@ -751,20 +1090,23 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     xpi = events['x'] / skyx_scaling
     ypi = events['y'] / skyx_scaling
     for k in range(n_events):
-        cmlpi = (np.rad2deg(jup_cml[k]))#.astype(int)
+        
+        # breakpoint()
+        # cmlpi = (np.rad2deg(jup_cml[k]))#.astype(int)
+        cmlpi = np.interp(events['t'].iloc[k], sev['t'], sev['lambda_pd'])
 
         xtj = xt[condition]
         ytj = yt[condition]
         latj = (laton.astype(int)) % 180
         lonj = ((lngon + cmlpi.astype(int) + 360.0).astype(int)) % 360
-        dd = np.sqrt((xpi.iloc[k]-xtj)**2 + (ypi.iloc[k]-ytj)**2) * skyx_scaling
+        dd = np.sqrt((xpi.iloc[k]-xtj)**2 + (ypi.iloc[k]-ytj)**2) * np.abs(skyx_scaling)
         psfdd = np.exp(-(dd/ (fwhm / (2.0 * np.sqrt(np.log(2.0)))))**2) / psfn # define PSF of instrument
 
         psf_max_cond = np.where(psfdd == max(psfdd))[0] # finds the max PSF over each point in the grid
         count_mx = np.count_nonzero(psf_max_cond)
-        breakpoint()
+        # breakpoint()
         if (count_mx == 1) & (on_disk_bool.iloc[k] == True):
-            
+            breakpoint()
             # These four need (?) to be assigned in the loop
             props[lonj,latj] = props[lonj,latj] + psfdd # assign the 2D PSF to the each point in the grid
             emiss = np.rad2deg(np.cos(cosc[condition[psf_max_cond]])) # find the emission angle from each max PSF
@@ -901,6 +1243,196 @@ def go_chandra(acis=None, obs_id=None, obs_dir=None, config=None):
     np.save(str(obs_dir) + f'/{obs_id}_sup_time_props_list.npy', np.array(sup_time_props_list))
     
     return planet_events
+
+def get_JupiterPatch(r_eq, nppa, sublat, **kwargs):
+    import matplotlib.patches as patches
+
+    # Equations for defining ellipse region
+    # tilt_ang_rad = np.deg2rad(nppa)
+    
+    # The rotational axis of Jupiter is flattened
+    r_rot = r_eq * (1 - flattening)
+    
+    # The *apparent* North-South axis is slightly larger than the rotation,
+    # if the planet is view from above/below the equator
+    r_NS_apparent = apparent_size(r_eq, r_rot, sublat)/2
+    
+    limb_ellipse = patches.Ellipse(
+        xy = (0,0), width = r_eq*2, height = r_NS_apparent*2, angle = -nppa, 
+        **kwargs)
+    
+    return limb_ellipse
+
+# The apparent size along sky North-South is the max. of the rotated ellipse
+def apparent_size(a, b, theta):
+    a, b, theta = np.array(a), np.array(b), np.array(theta)
+    θ = np.deg2rad(theta)
+    n = 1000
+    # Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0
+    A = np.tile((a**2 * np.sin(θ)**2) + (b**2 * np.cos(θ)**2), (n,1))
+    B = np.tile(2 * (b**2 - a**2) * np.sin(θ) * np.cos(θ), (n,1))
+    C = np.tile((a**2 * np.cos(θ)**2) + (b**2 * np.sin(θ)**2), (n,1))
+    D = 0
+    E = 0
+    F = np.tile(- a**2 * b**2, (n,1))
+    
+    # Rather than optimizing, just try a load of test points
+    x = np.linspace(-a, a, 1000)
+    if len(x.shape) == 1: x = x[:, np.newaxis]
+    y0 = (-B*x + np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
+    # y1 = (-B*x - np.sqrt(B**2 * x**2 - 4*A*C*x**2 - 4*C*F))/(2 * C)
+    
+    return 2*np.nanmax(y0, axis=0)
+
+def psf_from_header(header, obs_dir):
+    import subprocess 
+    
+    # !!!! Hardcoded marx profile
+    default_pfile = '/Users/mrutala/miniconda3/envs/ciao-4.17/share/marx/pfiles/marx.par'
+    
+    output_dir = obs_dir + '/marx_psf'
+    
+    print("Beginning MARX simulation...")
+    
+    # Default SIM X/Z values from https://cxc.harvard.edu/ciao/threads/marx_sim/
+    # NB: These do not include spectral defaults
+    sim_x_defaults = {'ACIS-I': -0.78234819833843,
+                      'ACIS-S': -0.68426746699586,
+                      'HRC-I': -1.0402925884,
+                      'HRC-S': -1.5333365632,}
+    sim_z_defaults = {'ACIS-I': -233.5924630914,
+                      'ACIS-S': -190.1325231040,
+                      'HRC-I': 126.9854943053,
+                      'HRC-S': 250.4559758190}
+    param_dict = {
+        'NumRays': -100000,
+        'dNumRays': 100000,
+        'TStart': header['TSTART'],
+        'ExposureTime': 0,
+        'OutputDir': output_dir,
+        
+        # Science Instrument set up and control
+        'MirrorType': "HRMA",
+        'GratingType': "NONE",
+        'DetectorType': "HRC-S",
+        'DetOffsetX': header['SIM_X'] - sim_x_defaults[header['DETNAM']],
+        'DetOffsetZ': header['SIM_Z'] - sim_z_defaults[header['DETNAM']],
+        
+        'SourceFlux': 0.01, #incoming ray flux (photons/sec/cm^2)
+        'SpectrumType': "FLAT",
+        
+        #  Energy limits  (for flat spectrum model)
+        'MinEnergy': 0.03,  #,0.03,12.0,"MIN ray energy (keV)"
+        'MaxEnergy': 4.0,  # ,0.03,12.0,"MAX ray energy (keV)"
+    
+        'SourceRA': header['RA_TARG'],
+        'SourceDEC': header['DEC_TARG'],
+        
+        'RA_Nom': header['RA_NOM'],     # "RA_NOM for dither (degrees)"
+        'Dec_Nom': header['DEC_NOM'],   # "DEC_NOM for dither (degrees)"
+        'Roll_Nom': header['ROLL_NOM'], # "ROLL_NOM for dither (degrees)"
+    
+        'DitherModel': 'INTERNAL',
+        }
+    
+    marxcall = ['marx'] + ['@@' + default_pfile] 
+    marxcall += ['{0}={1}'.format(k, v) for k, v in param_dict.items()]
+    marxcall = ' '.join(marxcall)
+    out = subprocess.run(marxcall, shell=True, capture_output=True)
+    
+    marx2fitscall = ['marx2fits'] + [output_dir, obs_dir + '/marx_psf.fits']
+    marx2fitscall = ' '.join(marx2fitscall)
+    out = subprocess.run(marx2fitscall, shell=True, capture_output=True)
+    
+    with astropy.io.fits.open(obs_dir + '/marx_psf.fits') as hdul:
+        psf_data = hdul[1].data
+        psf_hdr =  hdul[1].header
+        
+    # Get the PSF centering and scaling terms
+    psfx_center, psfx_scaling = psf_hdr['TCRPX9'], psf_hdr['TCDLT9']
+    psfy_center, psfy_scaling = psf_hdr['TCRPX10'], psf_hdr['TCDLT10']
+    
+    # Center and scale the PSF
+    # Shift the PSF to zero, as this has already been done to the obs.
+    bigxpsf = (psf_data.X - psfx_center) * psfx_scaling * 3600
+    bigypsf = (psf_data.Y - psfy_center) * psfy_scaling * 3600
+    bigxpsf, bigypsf = bigxpsf - bigxpsf.mean(), bigypsf - bigypsf.mean()
+    
+    # The PSF has very distant outliers. Before fitting, trim it to 99%
+    cutoffs_arcsecs = np.arange(0.1, 10, 0.1)
+    percent_enclosed = [((bigxpsf**2 + bigypsf**2) < c**2).sum()/len(bigxpsf) for c in cutoffs_arcsecs]
+    cutoff_99p = np.interp(0.99, percent_enclosed, cutoffs_arcsecs)
+    
+    cutoff_indx = (bigxpsf**2 + bigypsf**2) < cutoff_99p**2
+    bigxpsf = bigxpsf[cutoff_indx]
+    bigypsf = bigypsf[cutoff_indx]
+        
+    fig, ax = plt.subplots(figsize=(4.5, 4.5))
+    plt.subplots_adjust(left=0.15, bottom=0.15, right=0.975, top=0.975)
+    ax.scatter(bigxpsf, bigypsf, s=0.5, alpha=0.1, lw=0)
+    ax.scatter([0], [0], color='black', marker='+', s=50)
+    
+    ax.set(aspect=1, 
+           xlim=[5, -5], xlabel='Target-centered Sky X ["]', 
+           ylim=[-5, 5], ylabel='Target-centered Sky Y ["]')
+    
+    
+    # Try to make a confidence ellipse
+    psf_cov = np.cov(bigxpsf, bigypsf)
+    eigenval, eigenvec = np.linalg.eig(psf_cov)
+    angle = np.rad2deg(np.arctan2(max(eigenval) - psf_cov[0,0], psf_cov[0,1]))
+    
+    p = patches.Ellipse((0,0), max(eigenval), min(eigenval), angle=angle)
+    ax.add_patch(p)
+    
+    ax.plot([0, eigenvec.T[0][0]*eigenval[0]], [0, eigenvec.T[0][1]*eigenval[0]], color='xkcd:red', lw=2)
+    ax.plot([0, eigenvec.T[1][0]*eigenval[1]], [0, eigenvec.T[1][1]*eigenval[1]], color='xkcd:green', lw=2)
+    
+    # theta = np.arctan2(*eigenvec.T[eigenval.argmax()])
+    
+    # ax.scatter(
+              
+    #            s=0.5, alpha=0.9, lw=0, color='xkcd:cyan')
+    
+    # x_r = bigxpsf*np.cos(theta) + bigypsf*np.sin(theta)
+    # y_r = - bigxpsf*np.sin(theta) + bigypsf*np.cos(theta)
+    # (x_r**2 / )
+    
+    # p = patches.Ellipse((0,0), width = max(eigenval), height = min(eigenval), angle = np.rad2deg(theta))
+    # ax.add_patch(p)
+    # plt.show()
+    # breakpoint()
+    return psf_cov
+
+def get_UVISPolygon():
+    # Copied-and-pasted definitions from OBSVIS
+    # With target coordinates = (180,0) & roll = 0 & in RA/DEC [deg]
+    polygon = (179.6937151,0.0587638,179.6938477,-0.0483477,180.2506278,-0.0475864,180.2504940,0.0595286)
+    lines = [(179.6938092,-0.0170641,179.9044965,-0.0167775), 
+             (179.9044965,-0.0167775,179.9044021,0.0590508), 
+             (180.0844517,0.0592984,180.0845463,-0.0165308), 
+             (180.0845463,-0.0165308,180.2505888,-0.0163018)
+             ]
+    
+    polygon_xy = np.array([polygon[::2] + (polygon[0],), polygon[1::2] + (polygon[1],)])
+    lines_xy = np.array([[l[::2], l[1::2]] for l in lines])
+    
+    polygon_xy[0] -= 180
+    lines_xy[:,0,:] -= 180
+    
+    chip2_polygon_xy = polygon_xy
+    
+    # Convert to a UVIS polygon
+    uvis_polygon_x = np.array([l[0] for l in lines_xy]).flatten()
+    uvis_polygon_y = np.array([l[1] for l in lines_xy]).flatten()
+    
+    missing_vert_index = polygon_xy[1] < uvis_polygon_y.min()
+    
+    uvis_polygon_x = np.append(uvis_polygon_x, [*polygon_xy[0][missing_vert_index][::-1], uvis_polygon_x[0]])
+    uvis_polygon_y = np.append(uvis_polygon_y, [*polygon_xy[1][missing_vert_index][::-1], uvis_polygon_y[0]])
+    uvis_polygon_xy = np.array([uvis_polygon_x, uvis_polygon_y])
+    
+    return uvis_polygon_xy, chip2_polygon_xy
 
 if __name__ == "__main__":
     import argparse
